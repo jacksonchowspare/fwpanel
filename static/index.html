@@ -336,11 +336,16 @@ async function loadProxy() {
       const cert = p.cert_exists
         ? (p.cert_expiry ? `有效至 ${new Date(p.cert_expiry * 1000).toLocaleDateString()}` : "已签发")
         : (p.ssl ? "未签发" : "未申请");
-      const certBtn = p.cert_exists ? "" : `<button class="btn mini" onclick="issueSsl('${p.id}')">申请证书</button>`;
+      const certCell = p.cert_exists
+        ? `${cert} <button class="btn mini ghost" onclick="renewCert('${p.id}')">手动续期</button>`
+        : (p.ssl ? "未签发" : `<button class="btn mini" onclick="issueSsl('${p.id}')">申请证书</button>`);
+      const ipBtn = p.block_ip
+        ? `<button class="btn mini" style="background:var(--accent2)" onclick="toggleBlockIp('${p.id}', false)">禁止IP访问中</button>`
+        : `<button class="btn mini ghost" onclick="toggleBlockIp('${p.id}', true)">禁止IP+端口访问</button>`;
       tr.innerHTML = `<td>${p.domain}</td><td>${p.scheme}://${p.target_host}:${p.target_port}${p.websocket ? " (WS)" : ""}</td>
-        <td style="color:var(--muted);font-size:12px">${cert}</td>
+        <td style="color:var(--muted);font-size:12px">${certCell}</td>
         <td><label class="switch"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProxy('${p.id}', this.checked)"><span class="slider"></span></label></td>
-        <td>${certBtn}<button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
+        <td>${ipBtn}<button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
       tbody.appendChild(tr);
     }
   } catch (e) { /* 静默 */ }
@@ -383,6 +388,19 @@ async function issueSsl(id) {
   try {
     const d = await api("POST", "/api/proxy/" + id, { action: "ssl", email });
     toast(d.msg || "证书已申请", "okk"); loadProxy();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function renewCert(id) {
+  if (!confirm("确认手动续期该证书？\n\n将强制重新签发（绕过自动续期），需要 80 端口可访问。")) return;
+  try {
+    const d = await api("POST", "/api/proxy/" + id, { action: "renew" });
+    toast(d.msg || "续期完成", "okk"); loadProxy();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function toggleBlockIp(id, on) {
+  try {
+    const d = await api("POST", "/api/proxy/" + id, { action: "blockip", enabled: on });
+    toast(d.msg || "已更新", "okk"); loadProxy();
   } catch (e) { toast(e.message, "err"); }
 }
 

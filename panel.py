@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.10.0"
+CURRENT_VERSION = "1.11.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -882,11 +882,21 @@ def cert_status(domain):
     return None
 
 
+def host_guard(domain):
+    """生成 nginx host 守卫：只允许通过域名访问，IP/其他 Host 直连返回 444"""
+    if domain.startswith("*."):
+        base = re.escape(domain[2:])
+        return f'    if ($host !~ ^(.+\\.)?{base}$) {{ return 444; }}\n'
+    return f'    if ($host != "{domain}") {{ return 444; }}\n'
+
+
 def render_proxy_conf(p):
     """生成 nginx server block 配置（含 ACME 挑战路径、HTTP→HTTPS 跳转、WebSocket 支持）"""
     ssl_on = bool(p.get("ssl")) and cert_files_exist(p["domain"])
     ws = bool(p.get("websocket"))
+    block_ip = bool(p.get("block_ip"))
     upstream = f"{p.get('scheme', 'http')}://{p['target_host']}:{p['target_port']}"
+    guard = host_guard(p["domain"]) if block_ip else ""
     ws_extra = ("        proxy_http_version 1.1;\n"
                 "        proxy_set_header Upgrade $http_upgrade;\n"
                 '        proxy_set_header Connection "upgrade";\n')
@@ -900,6 +910,8 @@ def render_proxy_conf(p):
     lines.append("    listen 80;")
     lines.append(f"    server_name {p['domain']};")
     lines.append(f"    location /.well-known/acme-challenge/ {{ root {ACME_WEBROOT}; }}")
+    if guard:
+        lines.extend(x for x in guard.splitlines() if x)
     if ssl_on:
         lines.append("    location / { return 301 https://$host$request_uri; }")
     else:
@@ -916,6 +928,8 @@ def render_proxy_conf(p):
         lines.append(f"    server_name {p['domain']};")
         lines.append(f"    ssl_certificate {LE_LIVE}/{p['domain']}/fullchain.pem;")
         lines.append(f"    ssl_certificate_key {LE_LIVE}/{p['domain']}/privkey.pem;")
+        if guard:
+            lines.extend(x for x in guard.splitlines() if x)
         lines.append("    location / {")
         lines.append(f"        proxy_pass {upstream};")
         lines.extend(x for x in hdr.splitlines() if x)
@@ -982,6 +996,24 @@ def issue_cert(domain, email):
     if r.returncode != 0:
         return False, f"证书申请失败: {(r.stderr or r.stdout).strip()[:300]}"
     return True, "证书已签发"
+
+
+def renew_cert(domain):
+    """手动续期证书（强制 renewal）并重载 nginx"""
+    if not certbot_available():
+        return False, "未安装 certbot"
+    try:
+        r = subprocess.run(["certbot", "renew", "--cert-name", domain, "--force-renewal",
+                            "--non-interactive"], capture_output=True, text=True, timeout=300)
+    except FileNotFoundError:
+        return False, "certbot 不可用"
+    except subprocess.TimeoutExpired:
+        return False, "续期超时（5 分钟）"
+    if r.returncode != 0:
+        return False, f"续期失败: {(r.stderr or r.stdout).strip()[:300]}"
+    if nginx_available():
+        subprocess.run(["nginx", "-s", "reload"], capture_output=True, text=True, timeout=15)
+    return True, "证书已续期，nginx 已重载"
 
 
 def pkg_mgr():
@@ -1594,8 +1626,20 @@ class PanelHandler(BaseHTTPRequestHandler):
             ok2, msg2 = apply_proxies(pstore)
             tail = f"；{msg2}" if ok2 else f"；配置应用失败: {msg2}"
             self._send(200, {"ok": True, "msg": msg + tail})
+        elif action == "renew":
+            ok, msg = renew_cert(p["domain"])
+            if not ok:
+                self._send(500, {"error": msg})
+                return
+            self._send(200, {"ok": True, "msg": msg})
+        elif action == "blockip":
+            p["block_ip"] = bool(data.get("enabled", True))
+            pstore.save()
+            ok, msg = apply_proxies(pstore)
+            state = "已开启" if p["block_ip"] else "已关闭"
+            self._send(200, {"ok": True, "msg": f"{p['domain']} 禁止 IP+端口访问{state}（{msg}）"})
         else:
-            self._send(400, {"error": f"未知操作: {action}（支持 enable / ssl）"})
+            self._send(400, {"error": f"未知操作: {action}（支持 enable / ssl / renew / blockip）"})
 
     def _api_proxy_delete(self, pid):
         """删除代理"""

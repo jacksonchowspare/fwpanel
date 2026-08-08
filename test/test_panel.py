@@ -738,6 +738,40 @@ class TestAPI(unittest.TestCase):
             panel.certbot_available = real_cert
             panel.install_pkgs = real_install
 
+    def test_proxy_renew_blockip_api(self):
+        """代理续期 + 禁止 IP 访问 API"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+        code, d = self._req("POST", "/api/proxy",
+                            {"domain": "renew.example.com", "target_host": "127.0.0.1",
+                             "target_port": 9001}, token=token)
+        self.assertEqual(code, 200, d)
+        pid = d["proxy"]["id"]
+        real_renew = panel.renew_cert
+        panel.renew_cert = lambda dom: (True, "证书已续期")
+        try:
+            code, d = self._req("POST", f"/api/proxy/{pid}", {"action": "renew"}, token=token)
+            self.assertEqual(code, 200, d)
+        finally:
+            panel.renew_cert = real_renew
+        # 禁止 IP 访问
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": True}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/proxy", token=token)
+        self.assertTrue(d["proxies"][0]["block_ip"])
+        # 关闭
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": False}, token=token)
+        self.assertEqual(code, 200, d)
+        self._req("DELETE", f"/api/proxy/{pid}", token=token)
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -1080,6 +1114,36 @@ class TestUpgrade(unittest.TestCase):
         finally:
             panel.subprocess.run = real_run
             panel.pkg_mgr = real_mgr
+
+    def test_host_guard(self):
+        """host 守卫：普通域名精确匹配，通配符域名正则匹配"""
+        g = panel.host_guard("app.example.com")
+        self.assertIn('if ($host != "app.example.com")', g)
+        self.assertIn("return 444", g)
+        g2 = panel.host_guard("*.example.com")
+        self.assertIn("!~", g2)
+        self.assertNotIn('$host != "', g2)
+
+    def test_render_proxy_conf_block_ip(self):
+        """开启禁止 IP 访问时配置包含 host 守卫"""
+        real = panel.cert_files_exist
+        panel.cert_files_exist = lambda d: False
+        try:
+            conf = panel.render_proxy_conf({
+                "domain": "app.example.com", "target_host": "127.0.0.1",
+                "target_port": 8080, "scheme": "http", "websocket": False,
+                "ssl": False, "block_ip": True,
+            })
+            self.assertIn('if ($host != "app.example.com")', conf)
+            self.assertIn("return 444", conf)
+            conf2 = panel.render_proxy_conf({
+                "domain": "app.example.com", "target_host": "127.0.0.1",
+                "target_port": 8080, "scheme": "http", "websocket": False,
+                "ssl": False, "block_ip": False,
+            })
+            self.assertNotIn("return 444", conf2)
+        finally:
+            panel.cert_files_exist = real
 
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""
