@@ -507,7 +507,7 @@ class TestUpgrade(unittest.TestCase):
             # 调用序列中 delete 必须在 nft -f 之前
             delete_idx = next(i for i, c in enumerate(calls)
                               if c[:5] == ["nft", "delete", "table", "inet", "fwpanel"])
-            load_idx = next(i for i, c in enumerate(calls) if c[:3] == ["nft", "-f"])
+            load_idx = next(i for i, c in enumerate(calls) if c[:2] == ["nft", "-f"])
             self.assertLess(delete_idx, load_idx, "必须先删除旧表再加载新规则")
         finally:
             panel.subprocess.run = real_run
