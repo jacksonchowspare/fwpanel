@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.14.5"
+CURRENT_VERSION = "1.14.6"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1596,14 +1596,14 @@ class PanelHandler(BaseHTTPRequestHandler):
             "scheme": scheme, "websocket": bool(data.get("websocket")),
             "ssl": bool(data.get("ssl")),
         })
-        # 防火墙放行 80/443（幂等）
+        # 防火墙放行 443（幂等）；80 不放行，如需证书申请请自行放行 80
         store = self.server.store
         changed = False
-        for p80 in (80, 443):
-            if not any(r.get("type") == "port_allow" and r.get("port") == p80
+        for p443 in (443,):
+            if not any(r.get("type") == "port_allow" and r.get("port") == p443
                        for r in store.rules):
-                store.add({"type": "port_allow", "proto": "tcp", "port": p80,
-                           "comment": "反代:HTTP/HTTPS"})
+                store.add({"type": "port_allow", "proto": "tcp", "port": p443,
+                           "comment": "反代:HTTPS"})
                 changed = True
         if changed:
             store.save()

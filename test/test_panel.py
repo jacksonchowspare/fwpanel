@@ -687,11 +687,11 @@ class TestAPI(unittest.TestCase):
                              "target_port": 8080, "websocket": True}, token=token)
         self.assertEqual(code, 200, d)
         pid = d["proxy"]["id"]
-        # 防火墙 80/443 自动放行
+        # 防火墙仅自动放行 443（80 不放行）
         code, d = self._req("GET", "/api/rules", token=token)
         ports = {r.get("port") for r in d["rules"] if r.get("type") == "port_allow"}
-        self.assertIn(80, ports)
         self.assertIn(443, ports)
+        self.assertNotIn(80, ports, "80 不应自动放行")
         # 查询列表
         code, d = self._req("GET", "/api/proxy", token=token)
         self.assertEqual(len(d["proxies"]), 1)
@@ -709,10 +709,10 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(code, 200, d)
         code, d = self._req("GET", "/api/proxy", token=token)
         self.assertEqual(d["proxies"], [])
-        # 清理 80/443 规则（避免影响其他测试）
+        # 清理 443 规则（避免影响其他测试）
         code, d = self._req("GET", "/api/rules", token=token)
         for r in d["rules"]:
-            if r.get("comment") == "反代:HTTP/HTTPS":
+            if r.get("comment") == "反代:HTTPS":
                 self._req("DELETE", f"/api/rules/{r['id']}", token=token)
         if os.path.exists(panel.PROXIES_FILE):
             os.remove(panel.PROXIES_FILE)
