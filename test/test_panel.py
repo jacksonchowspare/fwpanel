@@ -282,6 +282,11 @@ class TestAPI(unittest.TestCase):
         # 恢复宽松
         code, d = self._req("POST", "/api/mode", {"mode": "permissive"}, token=token)
         self.assertEqual(code, 200)
+        # 清理自动添加的面板端口规则（避免影响后续测试）
+        code, d = self._req("GET", "/api/rules", token=token)
+        for r in d["rules"]:
+            if r.get("comment") == panel.PANEL_PORT_COMMENT:
+                self._req("DELETE", f"/api/rules/{r['id']}", token=token)
 
     def test_panel_port(self):
         """修改面板端口：配置更新 + 严格模式规则迁移"""
