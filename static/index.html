@@ -310,6 +310,18 @@ tr:hover td { background: #1d2733; }
   </div>
 </div>
 
+<!-- 通用确认弹窗（面板风格） -->
+<div id="cfm_modal" class="modal-mask hidden">
+  <div class="modal" style="width:380px">
+    <h3 id="cfm_title">确认操作</h3>
+    <div id="cfm_msg" style="color:var(--muted);font-size:13px;margin-bottom:16px;white-space:pre-line"></div>
+    <div class="btnrow">
+      <button class="btn ghost" onclick="closeCfm()">取消</button>
+      <button class="btn" id="cfm_ok_btn" onclick="cfmOk()">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = "";
 let token = localStorage.getItem("fw_token") || "";
@@ -321,6 +333,16 @@ function toast(msg, type) {
   t.style.display = "block";
   clearTimeout(t._timer); t._timer = setTimeout(() => t.style.display = "none", 2500);
 }
+/* 面板风格确认弹窗 */
+let cfmCallback = null;
+function confirmPanel(msg, onOk, title) {
+  $("cfm_title").textContent = title || "确认操作";
+  $("cfm_msg").textContent = msg;
+  cfmCallback = onOk;
+  $("cfm_modal").classList.remove("hidden");
+}
+function closeCfm() { $("cfm_modal").classList.add("hidden"); cfmCallback = null; }
+function cfmOk() { const cb = cfmCallback; closeCfm(); if (cb) cb(); }
 async function api(method, path, body) {
   const opt = { method, headers: {} };
   if (token) opt.headers["Authorization"] = "Bearer " + token;
@@ -597,18 +619,18 @@ async function autoCheckUpgrade() {
 }
 async function doUpgrade() {
   if (!upgradeInfo || !upgradeInfo.update_available) return;
-  if (!confirm(`确认升级到 v${upgradeInfo.latest}？升级过程约 10-30 秒，完成后需重新登录。`)) return;
-  const btn = $("btn_upgrade");
-  btn.disabled = true; btn.textContent = "升级中...";
-  try {
-    const d = await api("POST", "/api/upgrade");
-    toast(d.msg || "升级成功", "okk");
-    setTimeout(() => { location.reload(); }, 4000);
-  } catch (e) {
-    toast("升级失败: " + e.message, "err");
-    btn.disabled = false; btn.textContent = "一键升级";
-    checkUpgrade();
-  }
+  confirmPanel(`确认升级到 v${upgradeInfo.latest}？\n\n升级过程约 10-30 秒，完成后需重新登录。`, () => {
+    const btn = $("btn_upgrade");
+    btn.disabled = true; btn.textContent = "升级中...";
+    api("POST", "/api/upgrade").then(d => {
+      toast(d.msg || "升级成功", "okk");
+      setTimeout(() => { location.reload(); }, 4000);
+    }).catch(e => {
+      toast("升级失败: " + e.message, "err");
+      btn.disabled = false; btn.textContent = "一键升级";
+      checkUpgrade();
+    });
+  }, "🔄 升级确认");
 }
 
 /* ---------- 服务开关 ---------- */
