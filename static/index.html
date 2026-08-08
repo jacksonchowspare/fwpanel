@@ -124,7 +124,7 @@ tr:hover td { background: #1d2733; }
     <div class="grid2">
       <div class="col">
         <div class="panel">
-          <h2>模式与保护</h2>
+          <h2>防火墙模式</h2>
           <div class="form-row">
             <select id="mode_sel">
               <option value="permissive">宽松模式（默认放行，按需拒绝）</option>
@@ -132,15 +132,8 @@ tr:hover td { background: #1d2733; }
             </select>
             <button class="btn" onclick="setMode()">应用模式</button>
           </div>
-          <div class="form-row">
-            <span style="align-self:center">SSH 保护端口</span>
-            <input id="ssh_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
-            <button class="btn ghost" onclick="setSshPort()">仅更新防火墙保护</button>
-            <button class="btn danger" onclick="applySshPort()">同步修改系统 SSH 端口</button>
-            <span id="sshd_hint" style="color:var(--muted);font-size:12px;align-self:center"></span>
-          </div>
           <div style="color:var(--muted);font-size:12px">
-            保护规则永远存在防锁死；切换端口时旧端口会临时放行，确认新端口可登录后删除临时规则
+            严格模式会自动放行面板端口，防止面板被锁死
           </div>
         </div>
 
@@ -162,6 +155,32 @@ tr:hover td { background: #1d2733; }
 
       <div class="col">
         <div class="panel">
+          <h2>🔑 SSH 保护端口</h2>
+          <div class="form-row">
+            <span style="align-self:center">SSH 保护端口</span>
+            <input id="ssh_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
+            <button class="btn ghost" onclick="setSshPort()">仅更新防火墙保护</button>
+            <button class="btn danger" onclick="applySshPort()">同步修改系统 SSH 端口</button>
+            <span id="sshd_hint" style="color:var(--muted);font-size:12px;align-self:center"></span>
+          </div>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:14px">
+            保护规则永远存在防锁死；切换端口时旧端口会临时放行，检测到新端口连接后自动清理旧规则
+          </div>
+          <div class="form-row">
+            <span style="align-self:center">面板端口</span>
+            <input id="panel_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
+            <button class="btn" onclick="setPanelPort()">修改面板端口</button>
+            <span style="color:var(--muted);font-size:12px;align-self:center">改后自动删旧放新并跳转</span>
+          </div>
+          <div class="form-row" style="margin-bottom:0">
+            <span style="align-self:center">登录用户名</span>
+            <input id="username_input" placeholder="用户名" style="width:120px">
+            <button class="btn" onclick="setUsername()">修改用户名</button>
+            <span style="color:var(--muted);font-size:12px;align-self:center">下次登录生效</span>
+          </div>
+        </div>
+
+        <div class="panel">
           <h2>🛡 SSH 防爆破</h2>
           <div class="form-row">
             <label class="switch" style="margin:0"><input type="checkbox" id="bf_enabled" onchange="saveBf()"><span class="slider"></span></label>
@@ -177,22 +196,6 @@ tr:hover td { background: #1d2733; }
             <button class="btn" onclick="saveBf()">保存</button>
           </div>
           <div id="bf_list" style="color:var(--muted);font-size:12px;line-height:2">当前无封禁 IP</div>
-        </div>
-
-        <div class="panel">
-          <h2>⚙️ 面板设置</h2>
-          <div class="form-row">
-            <span style="align-self:center">面板端口</span>
-            <input id="panel_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
-            <button class="btn" onclick="setPanelPort()">修改端口</button>
-            <span style="color:var(--muted);font-size:12px;align-self:center">改后自动删旧放新并跳转</span>
-          </div>
-          <div class="form-row">
-            <span style="align-self:center">登录用户名</span>
-            <input id="username_input" placeholder="用户名" style="width:120px">
-            <button class="btn" onclick="setUsername()">修改用户名</button>
-            <span style="color:var(--muted);font-size:12px;align-self:center">下次登录生效</span>
-          </div>
         </div>
       </div>
     </div>
