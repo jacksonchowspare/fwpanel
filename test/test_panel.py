@@ -237,9 +237,9 @@ class TestAPI(unittest.TestCase):
         token = d["token"]
         real = panel.apply_sshd_port
         panel.apply_sshd_port = lambda port: (True, f"系统 SSH 端口已切换为 {port}")
-        # 屏蔽后台监控线程启动（daemon 线程在测试中无需真实运行）
-        real_thread = panel.threading.Thread
-        panel.threading.Thread = lambda *a, **k: type("FakeThread", (), {"start": lambda s: None})()
+        # 屏蔽后台监控（mock 函数本身，不能 mock threading.Thread——那是标准库全局对象）
+        real_watch = panel.watch_ssh_switch
+        panel.watch_ssh_switch = lambda old, new, timeout=3600: None
         try:
             code, d = self._req("POST", "/api/ssh/apply", {"ssh_port": 3333}, token=token)
             self.assertEqual(code, 200, d)
@@ -258,7 +258,7 @@ class TestAPI(unittest.TestCase):
             self.assertIn(f"tcp dport 22 accept  # {panel.SSH_OLD_PORT_COMMENT}", text)
         finally:
             panel.apply_sshd_port = real
-            panel.threading.Thread = real_thread
+            panel.watch_ssh_switch = real_watch
             # 清理测试痕迹
             self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
             code, d = self._req("GET", "/api/rules", token=token)
