@@ -237,10 +237,13 @@ class TestAPI(unittest.TestCase):
         token = d["token"]
         real = panel.apply_sshd_port
         panel.apply_sshd_port = lambda port: (True, f"系统 SSH 端口已切换为 {port}")
+        # 屏蔽后台监控线程启动（daemon 线程在测试中无需真实运行）
+        real_thread = panel.threading.Thread
+        panel.threading.Thread = lambda *a, **k: type("FakeThread", (), {"start": lambda s: None})()
         try:
             code, d = self._req("POST", "/api/ssh/apply", {"ssh_port": 3333}, token=token)
             self.assertEqual(code, 200, d)
-            self.assertIn("临时放行", d["msg"])
+            self.assertIn("已启动自动检测", d["msg"])
             # 保护端口已更新
             code, d = self._req("GET", "/api/ssh", token=token)
             self.assertEqual(d["protected_port"], 3333)
@@ -255,6 +258,7 @@ class TestAPI(unittest.TestCase):
             self.assertIn(f"tcp dport 22 accept  # {panel.SSH_OLD_PORT_COMMENT}", text)
         finally:
             panel.apply_sshd_port = real
+            panel.threading.Thread = real_thread
             # 清理测试痕迹
             self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
             code, d = self._req("GET", "/api/rules", token=token)
@@ -424,6 +428,44 @@ class TestAPI(unittest.TestCase):
         self._req("POST", "/api/ssh", {"ssh_port": 2222}, token=token)
         self.assertFalse(self.cfg.get("ssh_port_auto"), "手动设置后应关闭自动同步")
         self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
+
+    def test_cleanup_old_ssh_rules(self):
+        """清理旧 SSH 端口规则：只删切换保护/服务开关规则，保留手动规则"""
+        store = panel.RuleStore()
+        store.rules = [
+            {"id": "1", "type": "port_allow", "proto": "tcp", "port": 22, "comment": panel.SSH_OLD_PORT_COMMENT},
+            {"id": "2", "type": "port_allow", "proto": "tcp", "port": 22, "comment": "服务:ssh"},
+            {"id": "3", "type": "port_allow", "proto": "tcp", "port": 22, "comment": "手动保留"},
+            {"id": "4", "type": "port_allow", "proto": "tcp", "port": 80, "comment": "其他"},
+        ]
+        store.save()
+        changed = panel.cleanup_old_ssh_rules(22)
+        self.assertTrue(changed)
+        rules = panel.RuleStore().rules
+        pairs = [(r["port"], r["comment"]) for r in rules]
+        self.assertNotIn((22, panel.SSH_OLD_PORT_COMMENT), pairs)
+        self.assertNotIn((22, "服务:ssh"), pairs)
+        self.assertIn((22, "手动保留"), pairs)
+        self.assertIn((80, "其他"), pairs)
+        # 无匹配规则时返回 False
+        self.assertFalse(panel.cleanup_old_ssh_rules(9999))
+        # 清理测试痕迹
+        panel.RuleStore().rules = []
+        panel.RuleStore().save()
+
+    def test_has_established_on_port(self):
+        """连接检测：ss 输出非空 = 有连接"""
+        import subprocess as sp
+        real = panel.subprocess.run
+        def fake(cmd, *a, **k):
+            out = "ESTAB 0 0 1.2.3.4:3333 5.6.7.8:51234\n" if "3333" in " ".join(cmd) else ""
+            return sp.CompletedProcess(cmd, 0, stdout=out, stderr="")
+        panel.subprocess.run = fake
+        try:
+            self.assertTrue(panel.has_established_on_port(3333))
+            self.assertFalse(panel.has_established_on_port(4444))
+        finally:
+            panel.subprocess.run = real
 
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",

@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.5.3"
+CURRENT_VERSION = "1.5.4"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -515,6 +515,45 @@ def sync_ssh_port(config):
     return False
 
 
+def has_established_on_port(port):
+    """检测端口上是否存在已建立的 TCP 连接（SSH 连接会保持 ESTABLISHED）"""
+    try:
+        r = subprocess.run(["ss", "-tn", "state", "established", f"( sport = :{port} )"],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and bool(r.stdout.strip())
+    except Exception:
+        return False
+
+
+def cleanup_old_ssh_rules(old_port):
+    """删除指向旧 SSH 端口的放行规则（切换保护临时规则 + SSH 服务开关规则）"""
+    store = RuleStore()
+    before = len(store.rules)
+    store.rules = [r for r in store.rules
+                   if not (r.get("type") == "port_allow" and r.get("port") == old_port
+                           and r.get("comment") in (SSH_OLD_PORT_COMMENT, "服务:ssh"))]
+    if len(store.rules) != before:
+        store.save()
+        nft = NFTManager(store, Config())
+        nft.apply()
+        return True
+    return False
+
+
+def watch_ssh_switch(old_port, new_port, timeout=3600):
+    """后台监控：新 SSH 端口出现连接后，自动删除旧端口放行规则（防锁死结束后自动收尾）"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if has_established_on_port(new_port):
+            if cleanup_old_ssh_rules(old_port):
+                log(f"检测到新 SSH 端口 {new_port} 已有连接，已自动删除旧端口 {old_port} 放行规则")
+            else:
+                log(f"检测到新 SSH 端口 {new_port} 已有连接（无旧端口规则需清理）")
+            return
+        time.sleep(30)
+    log(f"等待新 SSH 端口 {new_port} 连接超时（{timeout}s），旧端口 {old_port} 规则保留，可手动删除")
+
+
 def apply_sshd_port(port):
     """修改系统 SSH 服务端口：写入 sshd_config.d 并重启 ssh。返回 (ok, msg)"""
     if not (1 <= port <= 65535):
@@ -770,8 +809,9 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         hint = ""
         if port != old:
-            hint = (f"。旧端口 {old} 已临时放行（规则备注「{SSH_OLD_PORT_COMMENT}」），"
-                    f"确认新端口 {port} 可登录后，请在规则列表删除该临时规则")
+            threading.Thread(target=watch_ssh_switch, args=(old, port), daemon=True).start()
+            hint = (f"。已启动自动检测：新端口 {port} 出现连接后自动删除旧端口 {old} 的放行规则"
+                    f"（规则备注「{SSH_OLD_PORT_COMMENT}」）")
         self._send(200, {"ok": True, "msg": smsg + hint})
 
     def _api_panel_port(self):
