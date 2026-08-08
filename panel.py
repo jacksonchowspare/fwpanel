@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.18.1"
+CURRENT_VERSION = "1.18.2"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1541,11 +1541,15 @@ class PanelHandler(BaseHTTPRequestHandler):
                          "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
 
     def _api_bbr(self):
-        """查询 BBR 状态"""
+        """查询 BBR 状态与内核版本"""
         token = self._require_auth()
         if token is None:
             return
-        self._send(200, {"enabled": bbr_status(), "supported": bbr_available()})
+        self._send(200, {
+            "enabled": bbr_status(),
+            "supported": bbr_available(),
+            "kernel": os.uname().release,
+        })
 
     def _api_bbr_enable(self):
         """一键开启 BBR"""

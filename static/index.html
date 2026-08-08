@@ -193,6 +193,7 @@ tr:hover td { background: #1d2733; }
           <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
           <div class="form-row" style="margin-bottom:8px">
             <button class="btn" onclick="toggleBbr()">🚀 一键开启 BBR</button>
+            <button class="btn ghost" onclick="showKernel()">📦 内核版本</button>
             <span id="bbr_status" style="color:var(--muted);font-size:12px;align-self:center">检测中...</span>
           </div>
           <div style="color:var(--muted);font-size:12px">BBR 为 Google 的 TCP 拥塞控制算法，可提升网络传输速度（需 Linux 4.9+ 内核）</div>
@@ -432,13 +433,20 @@ async function refreshAll() {
 }
 
 /* ---------- BBR ---------- */
+let bbrInfo = null;
 async function loadBbr() {
   try {
     const d = await api("GET", "/api/bbr");
+    bbrInfo = d;
     $("bbr_status").textContent = d.enabled
       ? "✅ 已开启"
       : (d.supported ? "未开启（点击按钮开启）" : "⚠ 内核不支持");
   } catch (e) { $("bbr_status").textContent = "状态获取失败"; }
+}
+function showKernel() {
+  const k = (bbrInfo && bbrInfo.kernel) || "未知";
+  const sup = bbrInfo ? (bbrInfo.supported ? "✅ 支持" : "❌ 不支持") : "未知";
+  confirmPanel(`当前内核版本：${k}\n\nBBR 支持：${sup}`, null, "📦 内核版本");
 }
 async function toggleBbr() {
   confirmPanel("确认开启 BBR？\n\n将写入 /etc/sysctl.d/99-fwpanel-bbr.conf 并立即生效。\n不影响现有连接，重启后自动保持。", () => {

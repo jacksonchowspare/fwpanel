@@ -888,6 +888,7 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("GET", "/api/bbr", token=token)
         self.assertEqual(code, 200)
         self.assertIn("enabled", d)
+        self.assertTrue(d.get("kernel"), "应返回内核版本")
         code, d = self._req("POST", "/api/bbr", {}, token=token)
         self.assertEqual(code, 200, d)
 
