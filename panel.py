@@ -1742,7 +1742,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "IP 格式无效（支持 1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50 / IPv6）"})
                 return
             rule["ip"] = ip
-        self.server.store.add(rule)
+        rule = self.server.store.add(rule)
         ok, msg = self.server.nft.apply()
         if not ok:
             # 应用失败：回滚规则清单
