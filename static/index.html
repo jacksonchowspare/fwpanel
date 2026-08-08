@@ -229,6 +229,11 @@ tr:hover td { background: #1d2733; }
 
           <div style="color:var(--muted);font-size:12px;margin-bottom:6px">🔒 当前封禁（自动 + 手动）</div>
           <div id="bf_list" style="color:var(--muted);font-size:12px">当前无封禁 IP</div>
+          <div id="bf_pager" style="display:none;margin-top:10px;align-items:center;justify-content:center;gap:10px">
+            <button class="btn mini ghost" onclick="bfPageGo(-1)" id="bf_prev">上一页</button>
+            <span style="color:var(--muted);font-size:12px" id="bf_pageinfo">1/1</span>
+            <button class="btn mini ghost" onclick="bfPageGo(1)" id="bf_next">下一页</button>
+          </div>
         </div>
       </div>
     </div>
@@ -528,6 +533,9 @@ function fmtRemain(sec) {
   return parts.join(" ");
 }
 let bfTimer = null;
+let bfPage = 1;
+const BF_PAGE_SIZE = 2;
+function bfPageGo(d) { bfPage += d; loadBf(); }
 function startBfCountdown() {
   if (bfTimer) clearInterval(bfTimer);
   bfTimer = setInterval(() => {
@@ -547,13 +555,32 @@ async function loadBf() {
     $("bf_window").value = d.fail_window;
     $("bf_seconds").value = d.ban_seconds;
     const list = $("bf_list");
-    if (!d.bans || !d.bans.length) { list.innerHTML = "<div style=\"padding:8px 0\">当前无封禁 IP</div>"; return; }
-    list.innerHTML = d.bans.map(b =>
+    if (!d.bans || !d.bans.length) {
+      list.innerHTML = "<div style=\"padding:8px 0\">当前无封禁 IP</div>";
+      $("bf_pager").style.display = "none";
+      return;
+    }
+    // 分页：每页 2 条
+    const total = d.bans.length;
+    const pages = Math.max(1, Math.ceil(total / BF_PAGE_SIZE));
+    if (bfPage > pages) bfPage = pages;
+    if (bfPage < 1) bfPage = 1;
+    const start = (bfPage - 1) * BF_PAGE_SIZE;
+    list.innerHTML = d.bans.slice(start, start + BF_PAGE_SIZE).map(b =>
       `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px dashed var(--border)" data-until="${b.until}">
         <span style="color:#ff6b6b">🔒 ${b.ip} <span class="bf-remain" style="color:var(--muted)">（剩余 ${fmtRemain(b.remaining)}）</span></span>
         <button class="btn mini danger" onclick="unban('${b.ip}')">解封</button>
       </div>`).join("");
     startBfCountdown();
+    const pager = $("bf_pager");
+    if (total > BF_PAGE_SIZE) {
+      pager.style.display = "flex";
+      $("bf_pageinfo").textContent = `${bfPage}/${pages}（共 ${total} 条）`;
+      $("bf_prev").disabled = bfPage <= 1;
+      $("bf_next").disabled = bfPage >= pages;
+    } else {
+      pager.style.display = "none";
+    }
   } catch (e) { /* 静默 */ }
 }
 async function banIp() {
@@ -718,10 +745,11 @@ async function renderSvc() {
   const list = $("svc_list"); list.innerHTML = "";
   for (const [name, port, proto, label] of SVCS) {
     const p = (name === "ssh") ? sshPort : port;   // SSH 端口跟随当前保护端口
-    const on = rules.some(r => r.type === "port_allow" && r.port == p && (r.proto === proto || r.proto === "both"));
+    // SSH 保护规则由后端渲染时动态生成（防锁死，永远生效），开关常显开启且不可关闭
+    const on = name === "ssh" ? true : rules.some(r => r.type === "port_allow" && r.port == p && (r.proto === proto || r.proto === "both"));
     const row = document.createElement("div"); row.className = "svc";
     row.innerHTML = `<span><span class="name">${label}</span><span class="desc">${p}/${proto}</span></span>
-      <label class="switch"><input type="checkbox" ${on ? "checked" : ""} onchange="toggleSvc('${name}', this.checked)"><span class="slider"></span></label>`;
+      <label class="switch"><input type="checkbox" ${on ? "checked" : ""} ${name === "ssh" ? "disabled" : ""} onchange="toggleSvc('${name}', this.checked)"><span class="slider"></span></label>`;
     list.appendChild(row);
   }
   for (const [name, label] of CUSTOM_SVCS) {
