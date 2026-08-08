@@ -179,28 +179,33 @@ tr:hover td { background: #1d2733; }
 
         <div class="panel">
           <h2>🛡 SSH 防爆破</h2>
-          <div class="form-row">
+          <div class="form-row" style="margin-bottom:14px">
             <label class="switch" style="margin:0"><input type="checkbox" id="bf_enabled" onchange="saveBf()"><span class="slider"></span></label>
-            <span style="align-self:center">启用（检测 SSH 登录失败自动封禁 IP，当前连接 IP 自动豁免）</span>
+            <span style="align-self:center">启用自动封禁（检测 SSH 登录失败，当前连接 IP 自动豁免）</span>
           </div>
-          <div class="form-row">
-            <span style="align-self:center">失败次数</span>
-            <input id="bf_fails" style="width:55px" inputmode="numeric">
-            <span style="align-self:center">窗口(秒)</span>
-            <input id="bf_window" style="width:60px" inputmode="numeric">
-            <span style="align-self:center">封禁(秒)</span>
-            <input id="bf_seconds" style="width:70px" inputmode="numeric">
-            <button class="btn" onclick="saveBf()">保存</button>
+
+          <div style="background:#0d1218;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+            <div style="color:var(--muted);font-size:12px;margin-bottom:8px">⚙️ 自动封禁参数</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span style="font-size:13px;white-space:nowrap">失败 <input id="bf_fails" style="width:50px;padding:5px" inputmode="numeric"> 次</span>
+              <span style="font-size:13px;white-space:nowrap">窗口 <input id="bf_window" style="width:56px;padding:5px" inputmode="numeric"> 秒</span>
+              <span style="font-size:13px;white-space:nowrap">封禁 <input id="bf_seconds" style="width:60px;padding:5px" inputmode="numeric"> 秒</span>
+              <button class="btn" onclick="saveBf()">保存配置</button>
+            </div>
           </div>
-          <div class="form-row">
-            <span style="align-self:center">手动封禁 IP</span>
-            <input id="bf_ban_ip" placeholder="IP 地址" style="width:130px">
-            <button class="btn" onclick="banIp()">封禁</button>
-            <span style="align-self:center;margin-left:10px">手动解封</span>
-            <input id="bf_unban_ip" placeholder="IP 地址" style="width:130px">
-            <button class="btn ghost" onclick="unbanIp()">解封</button>
+
+          <div style="background:#0d1218;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+            <div style="color:var(--muted);font-size:12px;margin-bottom:8px">🚫 手动封禁 / 解封</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input id="bf_ban_ip" placeholder="要封禁的 IP" style="width:140px">
+              <button class="btn" onclick="banIp()">封禁</button>
+              <input id="bf_unban_ip" placeholder="要解封的 IP" style="width:140px;margin-left:10px">
+              <button class="btn ghost" onclick="unbanIp()">解封</button>
+            </div>
           </div>
-          <div id="bf_list" style="color:var(--muted);font-size:12px;line-height:2">当前无封禁 IP</div>
+
+          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">🔒 当前封禁（自动 + 手动）</div>
+          <div id="bf_list" style="color:var(--muted);font-size:12px">当前无封禁 IP</div>
         </div>
       </div>
     </div>
@@ -522,10 +527,12 @@ async function loadBf() {
     $("bf_window").value = d.fail_window;
     $("bf_seconds").value = d.ban_seconds;
     const list = $("bf_list");
-    if (!d.bans || !d.bans.length) { list.textContent = "当前无封禁 IP"; return; }
+    if (!d.bans || !d.bans.length) { list.innerHTML = "<div style=\"padding:8px 0\">当前无封禁 IP</div>"; return; }
     list.innerHTML = d.bans.map(b =>
-      `<span style="color:#ff6b6b">🔒 ${b.ip}（剩余 ${fmtRemain(b.remaining)}）</span> ` +
-      `<button class="btn mini danger" onclick="unban('${b.ip}')">解封</button><br>`).join("");
+      `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px dashed var(--border)">
+        <span style="color:#ff6b6b">🔒 ${b.ip} <span style="color:var(--muted)">（剩余 ${fmtRemain(b.remaining)}）</span></span>
+        <button class="btn mini danger" onclick="unban('${b.ip}')">解封</button>
+      </div>`).join("");
   } catch (e) { /* 静默 */ }
 }
 async function banIp() {
