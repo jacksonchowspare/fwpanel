@@ -669,6 +669,54 @@ class TestAPI(unittest.TestCase):
         self._req("POST", "/api/password",
                   {"old_password": "NewPass123", "username": TEST_USER}, token=token)
 
+    def test_proxy_api(self):
+        """反向代理 API：添加/查询/删除 + 防火墙 80/443 联动"""
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 查询（空）
+        code, d = self._req("GET", "/api/proxy", token=token)
+        self.assertEqual(code, 200)
+        self.assertEqual(d["proxies"], [])
+        # 添加
+        code, d = self._req("POST", "/api/proxy",
+                            {"domain": "app.example.com", "target_host": "127.0.0.1",
+                             "target_port": 8080, "websocket": True}, token=token)
+        self.assertEqual(code, 200, d)
+        pid = d["proxy"]["id"]
+        # 防火墙 80/443 自动放行
+        code, d = self._req("GET", "/api/rules", token=token)
+        ports = {r.get("port") for r in d["rules"] if r.get("type") == "port_allow"}
+        self.assertIn(80, ports)
+        self.assertIn(443, ports)
+        # 查询列表
+        code, d = self._req("GET", "/api/proxy", token=token)
+        self.assertEqual(len(d["proxies"]), 1)
+        self.assertEqual(d["proxies"][0]["domain"], "app.example.com")
+        # 重复域名拒绝
+        code, d = self._req("POST", "/api/proxy",
+                            {"domain": "app.example.com", "target_host": "1.2.3.4",
+                             "target_port": 80}, token=token)
+        self.assertEqual(code, 400)
+        # 停用/启用
+        code, d = self._req("POST", f"/api/proxy/{pid}", {"action": "enable", "enabled": False}, token=token)
+        self.assertEqual(code, 200, d)
+        # 删除
+        code, d = self._req("DELETE", f"/api/proxy/{pid}", token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/proxy", token=token)
+        self.assertEqual(d["proxies"], [])
+        # 清理 80/443 规则（避免影响其他测试）
+        code, d = self._req("GET", "/api/rules", token=token)
+        for r in d["rules"]:
+            if r.get("comment") == "反代:HTTP/HTTPS":
+                self._req("DELETE", f"/api/rules/{r['id']}", token=token)
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -933,6 +981,57 @@ class TestUpgrade(unittest.TestCase):
             self.assertEqual(store.rules, [])
         finally:
             panel.get_failed_ssh_attempts = real_a
+
+    def test_render_proxy_conf(self):
+        """nginx 反代配置生成：HTTP/ACME 挑战/WebSocket/HTTPS 跳转"""
+        real = panel.cert_files_exist
+        panel.cert_files_exist = lambda d: False
+        try:
+            conf = panel.render_proxy_conf({
+                "domain": "app.example.com", "target_host": "127.0.0.1",
+                "target_port": 8080, "scheme": "http", "websocket": True, "ssl": False,
+            })
+            self.assertIn("server_name app.example.com;", conf)
+            self.assertIn("proxy_pass http://127.0.0.1:8080;", conf)
+            self.assertIn("location /.well-known/acme-challenge/", conf)
+            self.assertIn("proxy_set_header Upgrade $http_upgrade;", conf)
+            self.assertNotIn("listen 443", conf)
+        finally:
+            panel.cert_files_exist = real
+        # 有证书时：HTTP 跳转 + HTTPS server
+        panel.cert_files_exist = lambda d: True
+        try:
+            conf = panel.render_proxy_conf({
+                "domain": "app.example.com", "target_host": "10.0.0.2",
+                "target_port": 3000, "scheme": "http", "websocket": False, "ssl": True,
+            })
+            self.assertIn("listen 443 ssl;", conf)
+            self.assertIn("ssl_certificate /etc/letsencrypt/live/app.example.com/fullchain.pem;", conf)
+            self.assertIn("return 301 https://$host$request_uri;", conf)
+        finally:
+            panel.cert_files_exist = real
+
+    def test_proxy_store_crud(self):
+        """ProxyStore 增删查"""
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+        store = panel.ProxyStore()
+        p = store.add({"domain": "a.example.com", "target_host": "127.0.0.1",
+                       "target_port": 8080, "scheme": "http", "websocket": False, "ssl": False})
+        self.assertTrue(p["id"])
+        self.assertEqual(store.get(p["id"])["domain"], "a.example.com")
+        store2 = panel.ProxyStore()
+        self.assertEqual(len(store2.proxies), 1, "应持久化到文件")
+        self.assertTrue(store.remove(p["id"]))
+        self.assertFalse(store.remove(p["id"]))
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+
+    def test_apply_proxies_dry_run(self):
+        """apply_proxies 在 dry-run 环境返回成功"""
+        store = panel.ProxyStore()
+        ok, msg = panel.apply_proxies(store)
+        self.assertTrue(ok, msg)
 
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""

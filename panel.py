@@ -27,6 +27,7 @@ fwpanel — 自研防火墙控制面板（适配 Debian 13 / nftables）
 """
 
 import argparse
+import datetime
 import hashlib
 import hmac
 import ipaddress
@@ -46,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.8.0"
+CURRENT_VERSION = "1.9.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -782,6 +783,207 @@ def bruteforce_loop(config, store, interval=30):
         time.sleep(interval)
 
 
+# ------------------------------- 反向代理（Nginx） -------------------------------
+
+PROXIES_FILE = os.path.join(BASE_DIR, "proxies.json")
+ACME_WEBROOT = "/var/www/fwpanel-acme"
+LE_LIVE = "/etc/letsencrypt/live"
+
+
+class ProxyStore:
+    def __init__(self):
+        self.proxies = self._load()
+
+    def _load(self):
+        try:
+            with open(PROXIES_FILE) as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def save(self):
+        os.makedirs(BASE_DIR, exist_ok=True)
+        tmp = PROXIES_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.proxies, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, PROXIES_FILE)
+
+    def add(self, p):
+        p = dict(p)
+        p["id"] = secrets.token_hex(6)
+        p.setdefault("scheme", "http")
+        p.setdefault("websocket", False)
+        p.setdefault("ssl", False)
+        p.setdefault("enabled", True)
+        p["created"] = int(time.time())
+        self.proxies.append(p)
+        self.save()
+        return p
+
+    def get(self, pid):
+        for p in self.proxies:
+            if p["id"] == pid:
+                return p
+        return None
+
+    def remove(self, pid):
+        for i, p in enumerate(self.proxies):
+            if p["id"] == pid:
+                self.proxies.pop(i)
+                self.save()
+                return True
+        return False
+
+
+def nginx_conf_dir():
+    """检测 nginx 配置目录（Debian: sites-enabled，Arch/Fedora: conf.d）"""
+    for d in ("/etc/nginx/sites-enabled", "/etc/nginx/conf.d"):
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+def nginx_available():
+    return shutil.which("nginx") is not None
+
+
+def nginx_active():
+    try:
+        r = subprocess.run(["systemctl", "is-active", "nginx"],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
+def certbot_available():
+    return shutil.which("certbot") is not None
+
+
+def cert_files_exist(domain):
+    return os.path.isfile(os.path.join(LE_LIVE, domain, "fullchain.pem"))
+
+
+def cert_status(domain):
+    """返回证书到期时间戳（无证书返回 None）"""
+    pem = os.path.join(LE_LIVE, domain, "fullchain.pem")
+    if not os.path.isfile(pem):
+        return None
+    try:
+        r = subprocess.run(["openssl", "x509", "-enddate", "-noout", "-in", pem],
+                           capture_output=True, text=True, timeout=10)
+        m = re.search(r"notAfter=(.+)", r.stdout)
+        if m:
+            dt = datetime.datetime.strptime(m.group(1).strip(), "%b %d %H:%M:%S %Y %Z")
+            return int(dt.timestamp())
+    except Exception:
+        pass
+    return None
+
+
+def render_proxy_conf(p):
+    """生成 nginx server block 配置（含 ACME 挑战路径、HTTP→HTTPS 跳转、WebSocket 支持）"""
+    ssl_on = bool(p.get("ssl")) and cert_files_exist(p["domain"])
+    ws = bool(p.get("websocket"))
+    upstream = f"{p.get('scheme', 'http')}://{p['target_host']}:{p['target_port']}"
+    ws_extra = ("        proxy_http_version 1.1;\n"
+                "        proxy_set_header Upgrade $http_upgrade;\n"
+                '        proxy_set_header Connection "upgrade";\n')
+    hdr = ("        proxy_set_header Host $host;\n"
+           "        proxy_set_header X-Real-IP $remote_addr;\n"
+           "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+           "        proxy_set_header X-Forwarded-Proto $scheme;\n")
+    lines = [f"# FW-Panel 管理: {p['domain']}"]
+    # HTTP server（ACME 挑战；有证书时跳转 HTTPS）
+    lines.append("server {")
+    lines.append("    listen 80;")
+    lines.append(f"    server_name {p['domain']};")
+    lines.append(f"    location /.well-known/acme-challenge/ {{ root {ACME_WEBROOT}; }}")
+    if ssl_on:
+        lines.append("    location / { return 301 https://$host$request_uri; }")
+    else:
+        lines.append("    location / {")
+        lines.append(f"        proxy_pass {upstream};")
+        lines.extend(x for x in hdr.splitlines() if x)
+        if ws:
+            lines.extend(x for x in ws_extra.splitlines() if x)
+        lines.append("    }")
+    lines.append("}")
+    if ssl_on:
+        lines.append("server {")
+        lines.append("    listen 443 ssl;")
+        lines.append(f"    server_name {p['domain']};")
+        lines.append(f"    ssl_certificate {LE_LIVE}/{p['domain']}/fullchain.pem;")
+        lines.append(f"    ssl_certificate_key {LE_LIVE}/{p['domain']}/privkey.pem;")
+        lines.append("    location / {")
+        lines.append(f"        proxy_pass {upstream};")
+        lines.extend(x for x in hdr.splitlines() if x)
+        if ws:
+            lines.extend(x for x in ws_extra.splitlines() if x)
+        lines.append("    }")
+        lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def apply_proxies(store):
+    """生成所有启用代理的 nginx 配置 → nginx -t 校验 → reload"""
+    if DRY_RUN:
+        log("[dry-run] 生成 nginx 反代配置（跳过写入/reload）")
+        return True, "dry-run"
+    conf_dir = nginx_conf_dir()
+    if not conf_dir:
+        return False, "未找到 nginx 配置目录（未安装 nginx？）"
+    try:
+        # 写入/删除各代理配置
+        for p in store.proxies:
+            conf = os.path.join(conf_dir, f"fwpanel-{p['id']}.conf")
+            if p.get("enabled", True):
+                with open(conf, "w") as f:
+                    f.write(render_proxy_conf(p))
+            elif os.path.exists(conf):
+                os.remove(conf)
+        # 清理失效配置（代理已删除或已禁用）
+        for fn in os.listdir(conf_dir):
+            if fn.startswith("fwpanel-") and fn.endswith(".conf"):
+                pid = fn[len("fwpanel-"):-len(".conf")]
+                if not any(p["id"] == pid and p.get("enabled", True) for p in store.proxies):
+                    os.remove(os.path.join(conf_dir, fn))
+    except OSError as e:
+        return False, f"写入配置失败: {e}"
+    # 校验
+    try:
+        r = subprocess.run(["nginx", "-t"], capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        return False, "nginx 不可用（未安装）"
+    if r.returncode != 0:
+        return False, f"nginx 配置校验失败: {(r.stderr or r.stdout).strip()[:300]}"
+    subprocess.run(["nginx", "-s", "reload"], capture_output=True, text=True, timeout=15)
+    return True, "nginx 已重载"
+
+
+def issue_cert(domain, email):
+    """certbot 申请证书（webroot 方式，需 80 端口公网可达）"""
+    if not certbot_available():
+        return False, "未安装 certbot，请先安装（apt install certbot / pacman -S certbot / dnf install certbot）"
+    try:
+        os.makedirs(ACME_WEBROOT, exist_ok=True)
+        cmd = ["certbot", "certonly", "--webroot", "-w", ACME_WEBROOT,
+               "-d", domain, "--non-interactive", "--agree-tos", "--keep-until-expiring"]
+        if email:
+            cmd += ["-m", email]
+        else:
+            cmd += ["--register-unsafely-without-email"]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except FileNotFoundError:
+        return False, "certbot 不可用"
+    except subprocess.TimeoutExpired:
+        return False, "证书申请超时（180 秒），请确认 80 端口公网可达"
+    if r.returncode != 0:
+        return False, f"证书申请失败: {(r.stderr or r.stdout).strip()[:300]}"
+    return True, "证书已签发"
+
+
 # ------------------------------- HTTP 服务 -------------------------------
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -841,6 +1043,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_ssh()
         elif path == "/api/bruteforce":
             self._api_bruteforce()
+        elif path == "/api/proxy":
+            self._api_proxy()
         elif path == "/api/rules":
             self._api_list_rules()
         elif path == "/api/logout":
@@ -880,6 +1084,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_bruteforce_unban(path.rsplit("/", 1)[1])
         elif path == "/api/firewall":
             self._api_firewall()
+        elif path == "/api/proxy":
+            self._api_proxy_add()
+        elif path.startswith("/api/proxy/"):
+            self._api_proxy_action(path[len("/api/proxy/"):])
         elif path == "/api/username":
             self._api_username()
         else:
@@ -892,6 +1100,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_delete_rule(path.rsplit("/", 1)[1])
         elif path.startswith("/api/bruteforce/"):
             self._api_bruteforce_unban(path.rsplit("/", 1)[1])
+        elif path.startswith("/api/proxy/"):
+            self._api_proxy_delete(path.rsplit("/", 1)[1])
         else:
             self._send(404, {"error": "Not Found"})
 
@@ -1179,6 +1389,121 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return
             self.server.config.set("firewall_enabled", False)
             self._send(200, {"ok": True, "msg": "防火墙已关闭（所有端口放行，规则配置已保留，重新开启恢复）"})
+
+    def _api_proxy(self):
+        """查询反向代理列表与 nginx/certbot 状态"""
+        token = self._require_auth()
+        if token is None:
+            return
+        items = []
+        for p in ProxyStore().proxies:
+            items.append({**p, "cert_expiry": cert_status(p["domain"]),
+                          "cert_exists": cert_files_exist(p["domain"])})
+        self._send(200, {
+            "installed": nginx_available(),
+            "active": nginx_active(),
+            "certbot": certbot_available(),
+            "proxies": items,
+        })
+
+    def _api_proxy_add(self):
+        """添加反向代理：{domain, target_host, target_port, scheme?, websocket?, ssl?}"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        domain = str(data.get("domain", "")).strip().lower()
+        host = str(data.get("target_host", "")).strip()
+        try:
+            port = int(data.get("target_port", 0))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "目标端口必须是数字"})
+            return
+        if not re.match(r"^[a-zA-Z0-9.\-*]+$", domain) or not domain:
+            self._send(400, {"error": "域名格式无效（支持域名 / IP / 通配符 *.example.com）"})
+            return
+        if not host:
+            self._send(400, {"error": "目标主机不能为空"})
+            return
+        if not (1 <= port <= 65535):
+            self._send(400, {"error": "目标端口范围 1-65535"})
+            return
+        scheme = data.get("scheme", "http")
+        if scheme not in ("http", "https"):
+            self._send(400, {"error": "scheme 必须是 http 或 https"})
+            return
+        pstore = ProxyStore()
+        if any(p["domain"] == domain for p in pstore.proxies):
+            self._send(400, {"error": f"域名 {domain} 已存在代理"})
+            return
+        p = pstore.add({
+            "domain": domain, "target_host": host, "target_port": port,
+            "scheme": scheme, "websocket": bool(data.get("websocket")),
+            "ssl": bool(data.get("ssl")),
+        })
+        # 防火墙放行 80/443（幂等）
+        store = self.server.store
+        changed = False
+        for p80 in (80, 443):
+            if not any(r.get("type") == "port_allow" and r.get("port") == p80
+                       for r in store.rules):
+                store.add({"type": "port_allow", "proto": "tcp", "port": p80,
+                           "comment": "反代:HTTP/HTTPS"})
+                changed = True
+        if changed:
+            store.save()
+        self.server.nft.apply()
+        ok, msg = apply_proxies(pstore)
+        self._send(200, {"ok": True, "msg": f"代理 {domain} 已添加（{msg}）", "proxy": p})
+
+    def _api_proxy_action(self, suffix):
+        """代理操作：POST /api/proxy/<id>  {action: enable|ssl, ...}
+        或 POST /api/proxy/<id>/enable  /ssl"""
+        token = self._require_auth()
+        if token is None:
+            return
+        parts = suffix.split("/")
+        pid = parts[0]
+        path_action = parts[1] if len(parts) > 1 else None
+        data = self._read_json()
+        action = path_action or str(data.get("action", ""))
+        pstore = ProxyStore()
+        p = pstore.get(pid)
+        if not p:
+            self._send(400, {"error": "代理不存在"})
+            return
+        if action == "enable":
+            p["enabled"] = bool(data.get("enabled", True))
+            pstore.save()
+            ok, msg = apply_proxies(pstore)
+            self._send(200, {"ok": True, "msg": f"代理 {p['domain']} 已{'启用' if p['enabled'] else '停用'}（{msg}）"})
+        elif action == "ssl":
+            ok, msg = issue_cert(p["domain"], str(data.get("email", "")).strip())
+            if not ok:
+                self._send(500, {"error": msg})
+                return
+            p["ssl"] = True
+            pstore.save()
+            ok2, msg2 = apply_proxies(pstore)
+            tail = f"；{msg2}" if ok2 else f"；配置应用失败: {msg2}"
+            self._send(200, {"ok": True, "msg": msg + tail})
+        else:
+            self._send(400, {"error": f"未知操作: {action}（支持 enable / ssl）"})
+
+    def _api_proxy_delete(self, pid):
+        """删除代理"""
+        token = self._require_auth()
+        if token is None:
+            return
+        pstore = ProxyStore()
+        p = pstore.get(pid)
+        if not p:
+            self._send(400, {"error": "代理不存在"})
+            return
+        domain = p["domain"]
+        pstore.remove(pid)
+        ok, msg = apply_proxies(pstore)
+        self._send(200, {"ok": True, "msg": f"代理 {domain} 已删除（{msg}）"})
 
     def _api_list_rules(self):
         token = self._require_auth()

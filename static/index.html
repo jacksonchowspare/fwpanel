@@ -213,6 +213,25 @@ tr:hover td { background: #1d2733; }
     </div>
 
     <div class="panel">
+      <h2>🌐 反向代理（Nginx）</h2>
+      <div id="proxy_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
+      <div class="form-row" id="add_proxy_row">
+        <input id="px_domain" placeholder="域名（如 app.example.com）" style="width:180px">
+        <input id="px_host" placeholder="目标 IP/主机" style="width:120px">
+        <input id="px_port" placeholder="端口" style="width:70px" inputmode="numeric">
+        <select id="px_scheme"><option value="http">http</option><option value="https">https</option></select>
+        <label class="switch" title="WebSocket 支持"><input type="checkbox" id="px_ws"><span class="slider"></span></label>
+        <span style="align-self:center;color:var(--muted);font-size:12px">WS</span>
+        <button class="btn" onclick="addProxy()">添加代理</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">自动放行 80/443 并生成 nginx 配置</span>
+      </div>
+      <table>
+        <thead><tr><th>域名</th><th>目标</th><th>SSL 证书</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="proxy_rows"><tr><td colspan="5" style="color:var(--muted)">暂无代理</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
       <h2>规则列表</h2>
       <table>
         <thead><tr><th>类型</th><th>协议</th><th>端口 / IP</th><th>备注</th><th>操作</th></tr></thead>
@@ -293,8 +312,62 @@ async function refreshAll() {
     $("panel_port_input").value = status.panel_port || "";
     $("mode_sel").value = status.mode;
     $("st_ver").textContent = "v" + status.version;
-    renderSvc(); renderRules(); loadSsh(); loadBf(); autoCheckUpgrade();
+    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+/* ---------- 反向代理 ---------- */
+async function loadProxy() {
+  try {
+    const d = await api("GET", "/api/proxy");
+    const st = $("proxy_status");
+    st.innerHTML = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（apt install nginx / pacman -S nginx / dnf install nginx）")
+      + (d.active ? " · 运行中" : " · 未运行")
+      + (d.certbot ? " · certbot 就绪" : " · ⚠ 未装 certbot，无法申请证书");
+    const tbody = $("proxy_rows"); tbody.innerHTML = "";
+    if (!d.proxies.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无代理，添加一个开始</td></tr>'; return; }
+    for (const p of d.proxies) {
+      const tr = document.createElement("tr");
+      const cert = p.cert_exists
+        ? (p.cert_expiry ? `有效至 ${new Date(p.cert_expiry * 1000).toLocaleDateString()}` : "已签发")
+        : (p.ssl ? "未签发" : "未申请");
+      const certBtn = p.cert_exists ? "" : `<button class="btn mini" onclick="issueSsl('${p.id}')">申请证书</button>`;
+      tr.innerHTML = `<td>${p.domain}</td><td>${p.scheme}://${p.target_host}:${p.target_port}${p.websocket ? " (WS)" : ""}</td>
+        <td style="color:var(--muted);font-size:12px">${cert}</td>
+        <td><label class="switch"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProxy('${p.id}', this.checked)"><span class="slider"></span></label></td>
+        <td>${certBtn}<button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) { /* 静默 */ }
+}
+async function addProxy() {
+  try {
+    const d = await api("POST", "/api/proxy", {
+      domain: $("px_domain").value.trim(), target_host: $("px_host").value.trim(),
+      target_port: $("px_port").value.trim(), scheme: $("px_scheme").value,
+      websocket: $("px_ws").checked,
+    });
+    toast(d.msg || "代理已添加", "okk");
+    $("px_domain").value = ""; $("px_host").value = ""; $("px_port").value = "";
+    loadProxy();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function toggleProxy(id, on) {
+  try { const d = await api("POST", "/api/proxy/" + id, { action: "enable", enabled: on }); toast(d.msg || "已更新", "okk"); }
+  catch (e) { toast(e.message, "err"); loadProxy(); }
+}
+async function delProxy(id) {
+  if (!confirm("确认删除该代理？")) return;
+  try { const d = await api("DELETE", "/api/proxy/" + id); toast(d.msg || "已删除", "okk"); loadProxy(); }
+  catch (e) { toast(e.message, "err"); }
+}
+async function issueSsl(id) {
+  const email = prompt("请输入邮箱（用于证书过期通知，可留空）：", "");
+  if (email === null) return;
+  try {
+    const d = await api("POST", "/api/proxy/" + id, { action: "ssl", email });
+    toast(d.msg || "证书已申请", "okk"); loadProxy();
+  } catch (e) { toast(e.message, "err"); }
 }
 
 /* ---------- SSH 防爆破 ---------- */
