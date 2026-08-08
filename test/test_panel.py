@@ -115,6 +115,19 @@ class TestRules(unittest.TestCase):
         self.assertIn("tcp dport 4444 drop", text)
         self.assertIn("udp dport 4444 drop", text)
 
+    def test_ip_net_rule_render(self):
+        """IP 段黑名单/白名单渲染（IPv4+IPv6 CIDR）"""
+        self.store.rules = [
+            {"id": "1", "type": "ip_deny", "ip": "1.2.3.0/24", "comment": "封禁段"},
+            {"id": "2", "type": "ip_deny", "ip": "2001:db8::/32", "comment": "封禁v6段"},
+            {"id": "3", "type": "ip_allow", "ip": "10.0.0.0/8", "comment": "白名单段"},
+        ]
+        text = self.store.render(self.cfg)
+        self.assertIn("ip saddr 1.2.3.0/24 drop", text)
+        self.assertIn("ip6 saddr 2001:db8::/32 drop", text)
+        self.assertIn("ip saddr 10.0.0.0/8 accept", text)
+        self.assertIn("封禁段", text)
+
     def test_protected_rule_not_deletable(self):
         self.store.rules = [{"id": "x1", "type": "port_allow", "proto": "tcp",
                              "port": 22, "comment": "SSH 保护(不可删除)", "protected": True}]
@@ -184,7 +197,7 @@ class TestAPI(unittest.TestCase):
         self.assertIn("已在放行列表", d["msg"])
         # 规则确实存在
         code, d = self._req("GET", "/api/rules", token=token)
-        self.assertTrue(any(r["port"] == 9000 for r in d["rules"]))
+        self.assertTrue(any(r.get("port") == 9000 for r in d["rules"]))
         # 非法端口
         code, d = self._req("POST", "/api/open-port", {"port": 99999}, token=token)
         self.assertEqual(code, 400)
@@ -495,18 +508,6 @@ class TestAPI(unittest.TestCase):
         for bad in ("", "1.2.3.999", "1.2.3.0/33", "999.1.1.1", "abc",
                     "1.2.3.4/24/32", "2001:db8::/129"):
             self.assertFalse(panel.is_valid_ip_or_net(bad), f"{bad} 应非法")
-
-    def test_ip_net_rule_render(self):
-        """IP 段黑名单/白名单渲染（IPv4+IPv6 CIDR）"""
-        self.store.rules = [
-            {"id": "1", "type": "ip_deny", "ip": "1.2.3.0/24", "comment": "封禁段"},
-            {"id": "2", "type": "ip_deny", "ip": "2001:db8::/32", "comment": "封禁v6段"},
-            {"id": "3", "type": "ip_allow", "ip": "10.0.0.0/8", "comment": "白名单段"},
-        ]
-        text = self.store.render(self.cfg)
-        self.assertIn("ip saddr 1.2.3.0/24 drop   # 封禁段", text)
-        self.assertIn("ip6 saddr 2001:db8::/32 drop   # 封禁v6段", text)
-        self.assertIn("ip saddr 10.0.0.0/8 accept   # 白名单段", text)
 
     def test_ip_net_api(self):
         """API 添加 IP 段规则 + 非法格式拒绝"""
