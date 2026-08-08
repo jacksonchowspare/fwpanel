@@ -341,14 +341,16 @@ async function doUpgrade() {
 }
 
 /* ---------- 服务开关 ---------- */
-const SVCS = [["ssh","22"],["http","80"],["https","443"],["dns","53"],["mail","25"],["imap","143"],["smtps","465"]];
+const SVCS = [["ssh", null], ["http", 80], ["https", 443], ["dns", 53], ["mail", 25], ["imap", 143], ["smtps", 465]];
 async function renderSvc() {
   const rules = (await api("GET", "/api/rules")).rules;
+  const sshPort = (status && status.ssh_port) || 22;
   const list = $("svc_list"); list.innerHTML = "";
   for (const [name, port] of SVCS) {
-    const on = rules.some(r => r.type === "port_allow" && r.port == port);
+    const p = (name === "ssh") ? sshPort : port;   // SSH 端口跟随当前保护端口
+    const on = rules.some(r => r.type === "port_allow" && r.port == p);
     const row = document.createElement("div"); row.className = "svc";
-    row.innerHTML = `<span><span class="name">${name.toUpperCase()}</span><span class="desc">${port}/tcp</span></span>
+    row.innerHTML = `<span><span class="name">${name.toUpperCase()}</span><span class="desc">${p}/tcp</span></span>
       <label class="switch"><input type="checkbox" ${on ? "checked" : ""} onchange="toggleSvc('${name}', this.checked)"><span class="slider"></span></label>`;
     list.appendChild(row);
   }

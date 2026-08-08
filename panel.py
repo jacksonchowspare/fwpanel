@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.4.3"
+CURRENT_VERSION = "1.5.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -499,6 +499,22 @@ def get_sshd_port():
     return SSH_PORT_DEFAULT
 
 
+def sync_ssh_port(config):
+    """自动同步 SSH 保护端口到系统实际端口（仅当处于自动模式，手动设置后不再覆盖）"""
+    if not config.get("ssh_port_auto", True):
+        return False
+    try:
+        detected = get_sshd_port()
+        current = int(config.get("ssh_port", SSH_PORT_DEFAULT))
+        if detected != current:
+            config.set("ssh_port", detected)
+            log(f"SSH 保护端口已自动同步为系统实际端口 {detected}")
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def apply_sshd_port(port):
     """修改系统 SSH 服务端口：写入 sshd_config.d 并重启 ssh。返回 (ok, msg)"""
     if not (1 <= port <= 65535):
@@ -710,6 +726,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "端口范围 1-65535"})
             return
         self.server.config.set("ssh_port", port)
+        self.server.config.set("ssh_port_auto", False)   # 手动设置后停止自动同步
         ok, msg = self.server.nft.apply()
         if not ok:
             self._send(500, {"error": f"规则应用失败: {msg}"})
@@ -741,6 +758,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                            "comment": SSH_OLD_PORT_COMMENT})
         # 2) 更新保护端口并应用规则
         self.server.config.set("ssh_port", port)
+        self.server.config.set("ssh_port_auto", False)   # 手动设置后停止自动同步
         ok, msg = self.server.nft.apply()
         if not ok:
             self._send(500, {"error": f"防火墙规则应用失败: {msg}"})
@@ -870,7 +888,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "msg": nft_msg})
 
     def _api_service(self):
-        """服务模板开关：{name: 'http', enabled: true}"""
+        """服务模板开关：{name: 'http', enabled: true}
+        SSH 服务端口跟随当前保护端口（不固定 22），其余服务固定"""
         token = self._require_auth()
         if token is None:
             return
@@ -880,7 +899,10 @@ class PanelHandler(BaseHTTPRequestHandler):
         if name not in SERVICES:
             self._send(400, {"error": f"服务必须是 {list(SERVICES)} 之一"})
             return
-        proto, port = SERVICES[name]
+        if name == "ssh":
+            proto, port = "tcp", int(self.server.config.get("ssh_port", SSH_PORT_DEFAULT))
+        else:
+            proto, port = SERVICES[name]
         # 找同名规则
         existing = [r for r in self.server.store.rules
                     if r.get("type") == "port_allow" and r.get("port") == port]
@@ -1082,6 +1104,8 @@ def main():
     # serve：端口/监听地址以 config.json 为权威（安装时写入），CLI 显式参数可覆盖
     bind = args.bind or config.get("bind", "127.0.0.1")
     port = args.port or int(config.get("port", DEFAULT_PORT))
+    # 自动同步 SSH 保护端口到系统实际端口（防锁死保护跟随当前 SSH 端口，手动设置后停止）
+    sync_ssh_port(config)
     store = RuleStore()
     nft = NFTManager(store, config)
     auth = Auth(config)

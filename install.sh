@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="fwpanel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.4.3"
+readonly SCRIPT_VERSION="1.5.0"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -276,19 +276,33 @@ deploy_files() {
 write_config() {
     log_info "初始化配置 /etc/fwpanel ..."
     mkdir -p "$ETC_DIR"
-    # 由 Python 生成密码哈希，明文密码只打印一次，绝不落盘
+    # 由 Python 生成密码哈希，明文密码只打印一次，绝不落盘；
+    # ssh_port 自动检测系统实际 SSH 端口（防锁死保护跟随真实端口，不固定 22）
     python3 - "$PANEL_USER" "$PANEL_PASS" "$PANEL_PORT" "$PANEL_BIND" <<'EOF'
-import sys, json, hashlib, secrets, os
+import sys, json, hashlib, secrets, os, subprocess
 user, pwd, port, bind = sys.argv[1:5]
 salt = secrets.token_hex(16)
 dk = hashlib.pbkdf2_hmac("sha256", pwd.encode(), bytes.fromhex(salt), 120_000)
+
+def detect_ssh_port():
+    try:
+        r = subprocess.run(["sshd", "-T"], capture_output=True, text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            if line.startswith("port "):
+                return int(line.split()[1])
+    except Exception:
+        pass
+    return 22
+
+ssh_port = detect_ssh_port()
 cfg = {
     "username": user,
     "password_hash": f"{salt}${dk.hex()}",
     "port": int(port),
     "bind": bind,
     "mode": "permissive",
-    "ssh_port": 22,
+    "ssh_port": ssh_port,
+    "ssh_port_auto": True,      # 自动跟随系统 SSH 端口；面板手动设置后关闭
 }
 path = "/etc/fwpanel/config.json"
 tmp = path + ".tmp"
@@ -296,7 +310,7 @@ with open(tmp, "w") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
 os.chmod(tmp, 0o600)
 os.replace(tmp, path)
-print("config.json 已生成（含密码哈希，权限 600）")
+print(f"config.json 已生成（SSH 保护端口: {ssh_port}）")
 EOF
     # 初始空规则
     if [ ! -f "$ETC_DIR/rules.json" ]; then

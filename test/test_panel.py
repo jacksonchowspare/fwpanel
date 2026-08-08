@@ -392,6 +392,39 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("POST", "/api/username", {"username": TEST_USER}, token=token)
         self.assertEqual(code, 200)
 
+    def test_ssh_service_dynamic_port(self):
+        """SSH 服务开关端口跟随保护端口（不固定 22）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 设置保护端口 2222
+        code, d = self._req("POST", "/api/ssh", {"ssh_port": 2222}, token=token)
+        self.assertEqual(code, 200)
+        # 打开 SSH 服务开关
+        code, d = self._req("POST", "/api/service", {"name": "ssh", "enabled": True}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r.get("port") == 2222 and r.get("comment") == "服务:ssh"
+                            for r in d["rules"]),
+                        "SSH 服务开关应放行当前保护端口 2222")
+        self.assertFalse(any(r.get("port") == 22 and r.get("comment") == "服务:ssh"
+                             for r in d["rules"]),
+                         "不应再放行固定 22")
+        # 恢复
+        self._req("POST", "/api/service", {"name": "ssh", "enabled": False}, token=token)
+        self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
+
+    def test_ssh_set_disables_auto(self):
+        """手动设置保护端口后关闭自动同步"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        self._req("POST", "/api/ssh", {"ssh_port": 2222}, token=token)
+        self.assertFalse(self.cfg.get("ssh_port_auto"), "手动设置后应关闭自动同步")
+        self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -523,6 +556,27 @@ class TestUpgrade(unittest.TestCase):
         self.assertTrue(panel.version_gt("1.2.1", "1.2.0"))
         self.assertFalse(panel.version_gt("1.2.0", "1.2.0"))
         self.assertFalse(panel.version_gt("1.1.3", "1.2.0"))
+
+    def test_sync_ssh_port(self):
+        """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""
+        cfg = make_cfg()
+        real = panel.get_sshd_port
+        panel.get_sshd_port = lambda: 2222
+        try:
+            # 自动模式：同步到检测端口
+            cfg.set("ssh_port_auto", True)
+            cfg.set("ssh_port", 22)
+            changed = panel.sync_ssh_port(cfg)
+            self.assertTrue(changed)
+            self.assertEqual(int(cfg.get("ssh_port")), 2222)
+            # 手动模式：不覆盖
+            cfg.set("ssh_port_auto", False)
+            cfg.set("ssh_port", 33)
+            changed = panel.sync_ssh_port(cfg)
+            self.assertFalse(changed)
+            self.assertEqual(int(cfg.get("ssh_port")), 33)
+        finally:
+            panel.get_sshd_port = real
 
     def test_apply_is_idempotent(self):
         """apply 必须先删旧表再加载（防 nft -f 追加累积），回归测试"""
