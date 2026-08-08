@@ -867,10 +867,10 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(code, 200, d)
         code, d = self._req("GET", "/api/rules", token=token)
         self.assertFalse(any(r.get("port") == 5005 for r in d["rules"]), "5005 应已删除")
-        # both 删 5006（两条：tcp+udp）
+        # both 删 5006（存储为 1 条 both 规则，渲染时拆 tcp/udp 两条 nft 规则）
         code, d = self._req("POST", "/api/close-port", {"port": 5006, "proto": "both"}, token=token)
         self.assertEqual(code, 200, d)
-        self.assertEqual(d["removed"], 2)
+        self.assertEqual(d["removed"], 1)
         # 无规则端口
         code, d = self._req("POST", "/api/close-port", {"port": 59999, "proto": "tcp"}, token=token)
         self.assertEqual(code, 200)
