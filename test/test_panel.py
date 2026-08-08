@@ -430,13 +430,14 @@ class TestAPI(unittest.TestCase):
         self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
 
     def test_cleanup_old_ssh_rules(self):
-        """清理旧 SSH 端口规则：只删切换保护/服务开关规则，保留手动规则"""
+        """清理旧 SSH 端口规则：删除全部放行规则（含手动开放），保留面板端口规则"""
         store = panel.RuleStore()
         store.rules = [
             {"id": "1", "type": "port_allow", "proto": "tcp", "port": 22, "comment": panel.SSH_OLD_PORT_COMMENT},
             {"id": "2", "type": "port_allow", "proto": "tcp", "port": 22, "comment": "服务:ssh"},
-            {"id": "3", "type": "port_allow", "proto": "tcp", "port": 22, "comment": "手动保留"},
-            {"id": "4", "type": "port_allow", "proto": "tcp", "port": 80, "comment": "其他"},
+            {"id": "3", "type": "port_allow", "proto": "tcp", "port": 22, "comment": "手动开放"},
+            {"id": "4", "type": "port_allow", "proto": "tcp", "port": 22, "comment": panel.PANEL_PORT_COMMENT},
+            {"id": "5", "type": "port_allow", "proto": "tcp", "port": 80, "comment": "其他"},
         ]
         store.save()
         changed = panel.cleanup_old_ssh_rules(22)
@@ -445,7 +446,8 @@ class TestAPI(unittest.TestCase):
         pairs = [(r["port"], r["comment"]) for r in rules]
         self.assertNotIn((22, panel.SSH_OLD_PORT_COMMENT), pairs)
         self.assertNotIn((22, "服务:ssh"), pairs)
-        self.assertIn((22, "手动保留"), pairs)
+        self.assertNotIn((22, "手动开放"), pairs)
+        self.assertIn((22, panel.PANEL_PORT_COMMENT), pairs, "面板端口规则应保留")
         self.assertIn((80, "其他"), pairs)
         # 无匹配规则时返回 False
         self.assertFalse(panel.cleanup_old_ssh_rules(9999))

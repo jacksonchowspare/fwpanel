@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.5.7"
+CURRENT_VERSION = "1.5.8"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -526,12 +526,13 @@ def has_established_on_port(port):
 
 
 def cleanup_old_ssh_rules(old_port):
-    """删除指向旧 SSH 端口的放行规则（切换保护临时规则 + SSH 服务开关规则）"""
+    """删除指向旧 SSH 端口的全部放行规则（切换保护/服务开关/手动开放等），
+    仅保留面板端口规则（避免面板自身被锁死）"""
     store = RuleStore()
     before = len(store.rules)
     store.rules = [r for r in store.rules
                    if not (r.get("type") == "port_allow" and r.get("port") == old_port
-                           and r.get("comment") in (SSH_OLD_PORT_COMMENT, "服务:ssh"))]
+                           and r.get("comment") != PANEL_PORT_COMMENT)]
     if len(store.rules) != before:
         store.save()
         nft = NFTManager(store, Config())
