@@ -1127,13 +1127,13 @@ def bbr_available():
 
 def enable_bbr():
     """开启 BBR：写入 sysctl 配置（持久化）并立即生效"""
+    if DRY_RUN:
+        log("[dry-run] 写入 BBR sysctl 配置（跳过）")
+        return True, "dry-run"
     if not bbr_available():
         return False, "内核不支持 BBR（需 Linux 4.9+ 且内核包含 bbr 模块）"
     conf = "/etc/sysctl.d/99-fwpanel-bbr.conf"
     content = "net.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n"
-    if DRY_RUN:
-        log("[dry-run] 写入 BBR sysctl 配置（跳过）")
-        return True, "dry-run"
     try:
         with open(conf, "w") as f:
             f.write(content)
