@@ -124,6 +124,29 @@ tr:hover td { background: #1d2733; }
       </div>
     </div>
 
+    <div class="panel">
+      <h2>🌐 反向代理（Nginx）</h2>
+      <div id="proxy_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
+      <div class="form-row" id="px_install_row" style="display:none">
+        <button class="btn" onclick="installNginx()">⚙️ 一键安装 Nginx + certbot</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">自动按系统选择 apt / pacman / dnf，安装后自动写入 nginx 配置（需几分钟，期间页面等待属正常）</span>
+      </div>
+      <div class="form-row" id="add_proxy_row">
+        <input id="px_domain" placeholder="域名（如 app.example.com）" style="width:180px">
+        <input id="px_host" placeholder="目标 IP/主机" style="width:120px">
+        <input id="px_port" placeholder="端口" style="width:70px" inputmode="numeric">
+        <select id="px_scheme"><option value="http">http</option><option value="https">https</option></select>
+        <label class="switch" title="WebSocket 支持"><input type="checkbox" id="px_ws"><span class="slider"></span></label>
+        <span style="align-self:center;color:var(--muted);font-size:12px">WS</span>
+        <button class="btn" onclick="addProxy()">添加代理</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">自动放行 443 并生成 nginx 配置（80 需自行放行，证书申请需要）</span>
+      </div>
+      <table>
+        <thead><tr><th>域名</th><th>目标</th><th>SSL 证书</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="proxy_rows"><tr><td colspan="5" style="color:var(--muted)">暂无代理</td></tr></tbody>
+      </table>
+    </div>
+
     <div class="grid2">
       <div class="col">
         <div class="panel">
@@ -225,29 +248,6 @@ tr:hover td { background: #1d2733; }
         <input id="r_comment" placeholder="备注（可选）" style="width:100%">
         <button class="btn" onclick="addRule()">添加</button>
       </div>
-    </div>
-
-    <div class="panel">
-      <h2>🌐 反向代理（Nginx）</h2>
-      <div id="proxy_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
-      <div class="form-row" id="px_install_row" style="display:none">
-        <button class="btn" onclick="installNginx()">⚙️ 一键安装 Nginx + certbot</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">自动按系统选择 apt / pacman / dnf，安装后自动写入 nginx 配置（需几分钟，期间页面等待属正常）</span>
-      </div>
-      <div class="form-row" id="add_proxy_row">
-        <input id="px_domain" placeholder="域名（如 app.example.com）" style="width:180px">
-        <input id="px_host" placeholder="目标 IP/主机" style="width:120px">
-        <input id="px_port" placeholder="端口" style="width:70px" inputmode="numeric">
-        <select id="px_scheme"><option value="http">http</option><option value="https">https</option></select>
-        <label class="switch" title="WebSocket 支持"><input type="checkbox" id="px_ws"><span class="slider"></span></label>
-        <span style="align-self:center;color:var(--muted);font-size:12px">WS</span>
-        <button class="btn" onclick="addProxy()">添加代理</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">自动放行 443 并生成 nginx 配置（80 需自行放行，证书申请需要）</span>
-      </div>
-      <table>
-        <thead><tr><th>域名</th><th>目标</th><th>SSL 证书</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody id="proxy_rows"><tr><td colspan="5" style="color:var(--muted)">暂无代理</td></tr></tbody>
-      </table>
     </div>
 
     <div class="panel">
@@ -516,8 +516,28 @@ async function toggleBlockIp(id, on) {
 /* ---------- SSH 防爆破 ---------- */
 function fmtRemain(sec) {
   if (sec <= 0) return "已到期";
-  const h = Math.floor(sec / 3600), m = Math.ceil((sec % 3600) / 60);
-  return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分钟`;
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const parts = [];
+  if (d) parts.push(d + " 天");
+  if (h) parts.push(h + " 小时");
+  if (m) parts.push(m + " 分钟");
+  parts.push(s + " 秒");
+  return parts.join(" ");
+}
+let bfTimer = null;
+function startBfCountdown() {
+  if (bfTimer) clearInterval(bfTimer);
+  bfTimer = setInterval(() => {
+    const now = Date.now() / 1000;
+    document.querySelectorAll("#bf_list .bf-remain").forEach(el => {
+      const until = parseFloat(el.closest("div").dataset.until || "0");
+      const left = Math.max(0, Math.round(until - now));
+      el.textContent = `（剩余 ${fmtRemain(left)}）`;
+    });
+  }, 1000);
 }
 async function loadBf() {
   try {
@@ -529,10 +549,11 @@ async function loadBf() {
     const list = $("bf_list");
     if (!d.bans || !d.bans.length) { list.innerHTML = "<div style=\"padding:8px 0\">当前无封禁 IP</div>"; return; }
     list.innerHTML = d.bans.map(b =>
-      `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px dashed var(--border)">
-        <span style="color:#ff6b6b">🔒 ${b.ip} <span style="color:var(--muted)">（剩余 ${fmtRemain(b.remaining)}）</span></span>
+      `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px dashed var(--border)" data-until="${b.until}">
+        <span style="color:#ff6b6b">🔒 ${b.ip} <span class="bf-remain" style="color:var(--muted)">（剩余 ${fmtRemain(b.remaining)}）</span></span>
         <button class="btn mini danger" onclick="unban('${b.ip}')">解封</button>
       </div>`).join("");
+    startBfCountdown();
   } catch (e) { /* 静默 */ }
 }
 async function banIp() {
