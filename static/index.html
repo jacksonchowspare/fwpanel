@@ -94,7 +94,7 @@ tr:hover td { background: #1d2733; }
   <div id="main" class="hidden">
     <div class="topbar">
       <div>
-        <h1><span class="dot"></span>FW-Panel <span style="font-size:12px;color:var(--muted)" id="hostname"></span></h1>
+        <h1><span class="dot"></span>FW-Panel <span style="font-size:12px;color:var(--muted)">简易防护</span></h1>
         <div class="sub" id="sub_title">nftables 防火墙控制面板</div>
       </div>
       <div class="actions">
@@ -308,7 +308,6 @@ function logout() { token = ""; localStorage.removeItem("fw_token"); showLogin()
 async function refreshAll() {
   try {
     status = await api("GET", "/api/status");
-    $("hostname").textContent = "· " + status.hostname;
     $("sub_title").textContent = (status.distro || "Linux") + " · nftables 防火墙控制面板";
     $("st_fw").textContent = status.loaded ? "已生效" : "未加载";
     $("st_fw").className = "v " + (status.loaded ? "ok" : "off");
