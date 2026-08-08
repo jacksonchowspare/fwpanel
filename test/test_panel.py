@@ -799,9 +799,9 @@ class TestAPI(unittest.TestCase):
             os.remove(panel.PROXIES_FILE)
 
     def test_edit_rule_comment(self):
-        """修改规则备注 API"""
+        """修改规则备注 API（按字母序在 full_flow 前，密码为初始值）"""
         code, d = self._req("POST", "/api/login",
-                            {"username": TEST_USER, "password": "NewPass123"})
+                            {"username": TEST_USER, "password": TEST_PASS})
         self.assertEqual(code, 200)
         token = d["token"]
         code, d = self._req("POST", "/api/rules",
