@@ -879,6 +879,18 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("POST", "/api/close-port", {"port": 0}, token=token)
         self.assertEqual(code, 400)
 
+    def test_bbr_api(self):
+        """BBR API：查询 + 开启（按字母序在 full_flow 前，密码为初始值）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("GET", "/api/bbr", token=token)
+        self.assertEqual(code, 200)
+        self.assertIn("enabled", d)
+        code, d = self._req("POST", "/api/bbr", {}, token=token)
+        self.assertEqual(code, 200, d)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -1256,6 +1268,16 @@ class TestUpgrade(unittest.TestCase):
             self.assertNotIn("return 444", conf2)
         finally:
             panel.cert_files_exist = real
+
+    def test_bbr_status_detected(self):
+        """BBR 状态检测：返回布尔值（本机 Linux 有 /proc/sys）"""
+        self.assertIsInstance(panel.bbr_status(), bool)
+        self.assertIsInstance(panel.bbr_available(), bool)
+
+    def test_enable_bbr_dry_run(self):
+        """BBR 开启在 dry-run 环境：不写文件直接返回成功"""
+        ok, msg = panel.enable_bbr()
+        self.assertTrue(ok, msg)
 
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""

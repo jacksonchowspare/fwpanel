@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.17.4"
+CURRENT_VERSION = "1.18.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1105,6 +1105,51 @@ def ensure_nginx_default():
         pass
 
 
+# ------------------------------- BBR -------------------------------
+
+def bbr_status():
+    """BBR 是否已开启"""
+    try:
+        with open("/proc/sys/net/ipv4/tcp_congestion_control") as f:
+            return f.read().strip() == "bbr"
+    except Exception:
+        return False
+
+
+def bbr_available():
+    """内核是否支持 BBR"""
+    try:
+        with open("/proc/sys/net/ipv4/tcp_available_congestion_control") as f:
+            return "bbr" in f.read()
+    except Exception:
+        return False
+
+
+def enable_bbr():
+    """开启 BBR：写入 sysctl 配置（持久化）并立即生效"""
+    if not bbr_available():
+        return False, "内核不支持 BBR（需 Linux 4.9+ 且内核包含 bbr 模块）"
+    conf = "/etc/sysctl.d/99-fwpanel-bbr.conf"
+    content = "net.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n"
+    if DRY_RUN:
+        log("[dry-run] 写入 BBR sysctl 配置（跳过）")
+        return True, "dry-run"
+    try:
+        with open(conf, "w") as f:
+            f.write(content)
+    except OSError as e:
+        return False, f"写入配置失败: {e}"
+    try:
+        # 立即生效（默认 qdisc fq + bbr）
+        subprocess.run(["sysctl", "-w", "net.core.default_qdisc=fq"],
+                       capture_output=True, text=True, timeout=10)
+        subprocess.run(["sysctl", "-w", "net.ipv4.tcp_congestion_control=bbr"],
+                       capture_output=True, text=True, timeout=10)
+    except Exception:
+        return False, "sysctl 应用失败（配置已写入，重启后生效）"
+    return True, "BBR 已开启"
+
+
 # ------------------------------- HTTP 服务 -------------------------------
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -1156,6 +1201,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._serve_static("index.html")
         elif path == "/favicon.ico":
             self._serve_static("favicon.ico")
+        elif path == "/api/bbr":
+            self._api_bbr()
         elif path == "/api/status":
             self._api_status()
         elif path == "/api/upgrade/check":
@@ -1203,6 +1250,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_ssh_set()
         elif path == "/api/panel/port":
             self._api_panel_port()
+        elif path == "/api/bbr":
+            self._api_bbr_enable()
         elif path == "/api/bruteforce":
             self._api_bruteforce_set()
         elif path == "/api/bruteforce/ban":
@@ -1490,6 +1539,24 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return
         self._send(200, {"ok": True,
                          "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
+
+    def _api_bbr(self):
+        """查询 BBR 状态"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, {"enabled": bbr_status(), "supported": bbr_available()})
+
+    def _api_bbr_enable(self):
+        """一键开启 BBR"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = enable_bbr()
+        if not ok:
+            self._send(500, {"error": msg})
+            return
+        self._send(200, {"ok": True, "msg": msg, "enabled": bbr_status()})
 
     def _api_bruteforce(self):
         """查询防爆破配置与当前封禁列表"""

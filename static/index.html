@@ -190,6 +190,12 @@ tr:hover td { background: #1d2733; }
             <button class="btn danger" onclick="quickClose()">一键删除</button>
           </div>
           <div style="color:var(--muted);font-size:12px">删除该端口对应协议的放行规则（TCP 会连 TCP+UDP 一起删）</div>
+          <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
+          <div class="form-row" style="margin-bottom:8px">
+            <button class="btn" onclick="toggleBbr()">🚀 一键开启 BBR</button>
+            <span id="bbr_status" style="color:var(--muted);font-size:12px;align-self:center">检测中...</span>
+          </div>
+          <div style="color:var(--muted);font-size:12px">BBR 为 Google 的 TCP 拥塞控制算法，可提升网络传输速度（需 Linux 4.9+ 内核）</div>
         </div>
       </div>
 
@@ -421,8 +427,26 @@ async function refreshAll() {
     $("panel_port_input").value = status.panel_port || "";
     $("mode_sel").value = status.mode;
     $("st_ver").textContent = "v" + status.version;
-    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); autoCheckUpgrade();
+    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadBbr(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+/* ---------- BBR ---------- */
+async function loadBbr() {
+  try {
+    const d = await api("GET", "/api/bbr");
+    $("bbr_status").textContent = d.enabled
+      ? "✅ 已开启"
+      : (d.supported ? "未开启（点击按钮开启）" : "⚠ 内核不支持");
+  } catch (e) { $("bbr_status").textContent = "状态获取失败"; }
+}
+async function toggleBbr() {
+  confirmPanel("确认开启 BBR？\n\n将写入 /etc/sysctl.d/99-fwpanel-bbr.conf 并立即生效。\n不影响现有连接，重启后自动保持。", () => {
+    api("POST", "/api/bbr", {}).then(d => {
+      toast(d.msg || "BBR 已开启", "okk");
+      loadBbr();
+    }).catch(e => toast(e.message, "err"));
+  }, "🚀 开启 BBR");
 }
 
 /* ---------- 反向代理 ---------- */
