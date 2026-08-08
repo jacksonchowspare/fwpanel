@@ -104,7 +104,13 @@ tr:hover td { background: #1d2733; }
       <div class="card"><div class="k">规则模式</div><div class="v" id="st_mode">-</div></div>
       <div class="card"><div class="k">规则数量</div><div class="v" id="st_rules">-</div></div>
       <div class="card"><div class="k">SSH 保护端口</div><div class="v" id="st_ssh">-</div></div>
-      <div class="card"><div class="k">面板版本</div><div class="v" id="st_ver">-</div></div>
+      <div class="card"><div class="k">面板版本 / 更新</div><div class="v" id="st_ver" style="font-size:15px">-</div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+          <span style="color:var(--muted);font-size:11px" id="st_latest">最新 -</span>
+          <button class="btn mini ghost" onclick="checkUpgrade()">检查更新</button>
+          <button class="btn mini" id="btn_upgrade" onclick="doUpgrade()" disabled>升级</button>
+        </div>
+      </div>
     </div>
 
     <div class="grid2">
@@ -144,23 +150,6 @@ tr:hover td { background: #1d2733; }
             <span style="color:var(--muted);font-size:12px;align-self:center">立即添加放行规则并生效，重复开放不会报错</span>
           </div>
         </div>
-
-        <div class="panel">
-          <h2>添加规则</h2>
-          <div class="form-row">
-            <select id="r_type">
-              <option value="port_allow">放行端口</option>
-              <option value="port_deny">拒绝端口</option>
-              <option value="ip_allow">放行 IP</option>
-              <option value="ip_deny">拒绝 IP</option>
-            </select>
-            <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
-            <input id="r_port" placeholder="端口 (1-65535)" style="width:110px">
-            <input id="r_ip" placeholder="IP/IP段/IP范围（1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50）" style="width:200px">
-            <input id="r_comment" placeholder="备注（可选）" style="width:120px">
-            <button class="btn" onclick="addRule()">添加</button>
-          </div>
-        </div>
       </div>
 
       <div class="col">
@@ -197,15 +186,23 @@ tr:hover td { background: #1d2733; }
             <span style="color:var(--muted);font-size:12px;align-self:center">下次登录生效</span>
           </div>
         </div>
+      </div>
+    </div>
 
-        <div class="panel">
-          <h2>🔄 系统更新</h2>
-          <div class="form-row">
-            <span style="align-self:center">当前版本 <b id="cur_ver">-</b> ｜ 最新版本 <b id="latest_ver">-</b></span>
-            <button class="btn ghost" onclick="checkUpgrade()">检查更新</button>
-            <button class="btn" id="btn_upgrade" onclick="doUpgrade()" disabled>一键升级</button>
-          </div>
-        </div>
+    <div class="panel">
+      <h2>添加规则</h2>
+      <div class="form-row">
+        <select id="r_type">
+          <option value="port_allow">放行端口</option>
+          <option value="port_deny">拒绝端口</option>
+          <option value="ip_allow">放行 IP</option>
+          <option value="ip_deny">拒绝 IP</option>
+        </select>
+        <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
+        <input id="r_port" placeholder="端口 (1-65535)" style="width:130px">
+        <input id="r_ip" placeholder="IP/IP段/IP范围（1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50）" style="width:280px">
+        <input id="r_comment" placeholder="备注（可选）" style="width:180px">
+        <button class="btn" onclick="addRule()">添加</button>
       </div>
     </div>
 
@@ -285,7 +282,7 @@ async function refreshAll() {
     $("panel_port_input").value = status.panel_port || "";
     $("username_input").value = status.username || "";
     $("mode_sel").value = status.mode;
-    $("cur_ver").textContent = "v" + status.version;
+    $("st_ver").textContent = "v" + status.version;
     renderSvc(); renderRules(); loadSsh(); loadBf(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
@@ -379,6 +376,10 @@ async function applySshPort() {
 /* ---------- 系统更新 ---------- */
 let upgradeInfo = null;
 let lastUpgradeCheck = 0;
+function renderUpgradeUi(d) {
+  $("st_latest").textContent = d.update_available ? `新版 v${d.latest}` : "已是最新";
+  $("btn_upgrade").disabled = !d.update_available;
+}
 async function checkUpgrade() {
   const now = Date.now();
   if (!upgradeInfo && now - lastUpgradeCheck < 3000) return;  // 防连点
@@ -386,9 +387,7 @@ async function checkUpgrade() {
   try {
     const d = await api("GET", "/api/upgrade/check");
     upgradeInfo = d;
-    $("cur_ver").textContent = "v" + d.current;
-    $("latest_ver").textContent = d.update_available ? "v" + d.latest : "已是最新";
-    $("btn_upgrade").disabled = !d.update_available;
+    renderUpgradeUi(d);
     if (d.update_available) toast(`发现新版本 v${d.latest}，可一键升级`, "okk");
   } catch (e) { toast("检查更新失败: " + e.message, "err"); }
 }
@@ -398,9 +397,7 @@ async function autoCheckUpgrade() {
   try {
     const d = await api("GET", "/api/upgrade/check");
     upgradeInfo = d;
-    $("cur_ver").textContent = "v" + d.current;
-    $("latest_ver").textContent = d.update_available ? "v" + d.latest : "已是最新";
-    $("btn_upgrade").disabled = !d.update_available;
+    renderUpgradeUi(d);
     if (d.update_available) toast(`发现新版本 v${d.latest}，可一键升级`, "okk");
   } catch (e) { /* 网络失败静默，手动可重试 */ }
 }
