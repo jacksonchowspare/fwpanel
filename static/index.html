@@ -265,7 +265,7 @@ async function refreshAll() {
 async function setPanelPort() {
   const port = $("panel_port_input").value.trim();
   if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
-  if (!confirm(`确认将面板端口修改为 ${port}？\n\n修改后服务将重启并自动跳转到新地址：\nhttp://${location.hostname}:${port}\n\n如使用 SSH 隧道访问，请先断开并重新建立新端口隧道。`)) return;
+  if (!confirm(`确认将面板端口修改为 ${port}？\n\n将自动：删除旧端口放行规则 → 放行新端口 → 重启服务 → 跳转到新地址：\nhttp://${location.hostname}:${port}\n\n如使用 SSH 隧道访问，请先断开并重新建立新端口隧道。`)) return;
   try {
     const d = await api("POST", "/api/panel/port", { port });
     toast(d.msg || "面板端口已修改，正在跳转...", "okk");

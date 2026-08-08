@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.4.2"
+CURRENT_VERSION = "1.4.3"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -779,20 +779,15 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         # 更新配置
         self.server.config.set("port", port)
-        # 防火墙规则：迁移旧面板端口规则；若无则确保新端口有放行规则（防严格模式锁死）
+        # 防火墙规则：删除旧面板端口的全部放行规则（不留残留攻击面），并确保新端口放行
         store = self.server.store
-        migrated = False
-        for r in store.rules:
-            if (r.get("type") == "port_allow" and r.get("comment") == PANEL_PORT_COMMENT
-                    and r.get("port") == old):
-                r["port"] = port
-                migrated = True
-        if not migrated:
-            exists = any(r.get("type") == "port_allow" and r.get("port") == port
-                         and r.get("comment") == PANEL_PORT_COMMENT for r in store.rules)
-            if not exists:
-                store.add({"type": "port_allow", "proto": "tcp", "port": port,
-                           "comment": PANEL_PORT_COMMENT})
+        store.rules = [r for r in store.rules
+                       if not (r.get("type") == "port_allow" and r.get("port") == old)]
+        exists = any(r.get("type") == "port_allow" and r.get("port") == port
+                     and r.get("comment") == PANEL_PORT_COMMENT for r in store.rules)
+        if not exists:
+            store.add({"type": "port_allow", "proto": "tcp", "port": port,
+                       "comment": PANEL_PORT_COMMENT})
         store.save()
         self.server.nft.apply()
         # 延迟重启，响应先送达

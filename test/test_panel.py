@@ -289,14 +289,16 @@ class TestAPI(unittest.TestCase):
                 self._req("DELETE", f"/api/rules/{r['id']}", token=token)
 
     def test_panel_port(self):
-        """修改面板端口：配置更新 + 严格模式规则迁移"""
+        """修改面板端口：旧端口放行规则全部删除 + 新端口自动放行"""
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
         self.assertEqual(code, 200)
         token = d["token"]
-        # 预置一条严格模式遗留的面板端口规则（port=17999）
+        # 预置：面板端口规则 + 一条手动开放的旧端口规则（模拟残留）
         self.store.add({"type": "port_allow", "proto": "tcp", "port": 17999,
                         "comment": panel.PANEL_PORT_COMMENT})
+        self.store.add({"type": "port_allow", "proto": "tcp", "port": 17999,
+                        "comment": "手动开放"})
         # mock 重启动作（只 mock restart_service，不碰 subprocess.run，避免影响 status 等接口）
         real_timer, real_restart = panel.threading.Timer, panel.restart_service
         class FakeTimer:
@@ -314,11 +316,15 @@ class TestAPI(unittest.TestCase):
             # 配置已更新
             code, d = self._req("GET", "/api/status", token=token)
             self.assertEqual(d["panel_port"], 18001)
-            # 防火墙规则已迁移到新端口
+            # 旧端口 17999 的所有放行规则已删除（含手动开放的）
             code, d = self._req("GET", "/api/rules", token=token)
-            migrated = [r for r in d["rules"] if r.get("comment") == panel.PANEL_PORT_COMMENT]
-            self.assertEqual(len(migrated), 1)
-            self.assertEqual(migrated[0]["port"], 18001)
+            self.assertFalse(any(r.get("type") == "port_allow" and r.get("port") == 17999
+                                 for r in d["rules"]),
+                             "旧端口放行规则应全部删除")
+            # 新端口有面板端口放行规则（1 条）
+            new_rules = [r for r in d["rules"] if r.get("comment") == panel.PANEL_PORT_COMMENT]
+            self.assertEqual(len(new_rules), 1)
+            self.assertEqual(new_rules[0]["port"], 18001)
             # 占用端口拒绝
             code, d = self._req("POST", "/api/panel/port", {"port": 17999}, token=token)
             self.assertEqual(code, 400)
