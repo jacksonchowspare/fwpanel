@@ -640,6 +640,35 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(code, 200, d)
         self.assertTrue(self.cfg.get("firewall_enabled"))
 
+    def test_password_with_username(self):
+        """账户设置：一次请求同时修改用户名和密码"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 同时改用户名和密码
+        code, d = self._req("POST", "/api/password",
+                            {"old_password": "NewPass123", "new_password": "NewPass456",
+                             "username": "newadmin2"}, token=token)
+        self.assertEqual(code, 200, d)
+        # 新密码可登录
+        code, d = self._req("POST", "/api/login",
+                            {"username": "newadmin2", "password": "NewPass456"})
+        self.assertEqual(code, 200)
+        # 只改密码（不带 username）
+        code, d = self._req("POST", "/api/password",
+                            {"old_password": "NewPass456", "new_password": "NewPass123"},
+                            token=token)
+        self.assertEqual(code, 200)
+        # 原密码错误拒绝
+        code, d = self._req("POST", "/api/password",
+                            {"old_password": "wrong", "new_password": "NewPass789"},
+                            token=token)
+        self.assertEqual(code, 400)
+        # 恢复
+        self._req("POST", "/api/password",
+                  {"old_password": "NewPass123", "username": TEST_USER}, token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

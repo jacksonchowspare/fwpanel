@@ -166,17 +166,11 @@ tr:hover td { background: #1d2733; }
           <div style="color:var(--muted);font-size:12px;margin-bottom:14px">
             保护规则永远存在防锁死；切换端口时旧端口会临时放行，检测到新端口连接后自动清理旧规则
           </div>
-          <div class="form-row">
+          <div class="form-row" style="margin-bottom:0">
             <span style="align-self:center">面板端口</span>
             <input id="panel_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
             <button class="btn" onclick="setPanelPort()">修改面板端口</button>
             <span style="color:var(--muted);font-size:12px;align-self:center">改后自动删旧放新并跳转</span>
-          </div>
-          <div class="form-row" style="margin-bottom:0">
-            <span style="align-self:center">登录用户名</span>
-            <input id="username_input" placeholder="用户名" style="width:120px">
-            <button class="btn" onclick="setUsername()">修改用户名</button>
-            <span style="color:var(--muted);font-size:12px;align-self:center">下次登录生效</span>
           </div>
         </div>
 
@@ -230,15 +224,18 @@ tr:hover td { background: #1d2733; }
 
 <div id="toast"></div>
 
-<!-- 修改密码弹窗 -->
+<!-- 账户设置弹窗（用户名 + 密码） -->
 <div id="pwd_modal" class="modal-mask hidden">
   <div class="modal">
-    <h3>修改密码</h3>
+    <h3>账户设置</h3>
+    <div class="form-row"><input id="p_user" placeholder="新用户名（留空不修改）"></div>
+    <div class="form-row"><input id="p_user2" placeholder="确认新用户名"></div>
     <div class="form-row"><input id="p_old" type="password" placeholder="原密码"></div>
-    <div class="form-row"><input id="p_new" type="password" placeholder="新密码（至少 8 位）"></div>
+    <div class="form-row"><input id="p_new" type="password" placeholder="新密码（至少 8 位，留空不修改）"></div>
+    <div class="form-row"><input id="p_new2" type="password" placeholder="确认新密码"></div>
     <div class="btnrow">
       <button class="btn ghost" onclick="closePwd()">取消</button>
-      <button class="btn" onclick="changePwd()">确定</button>
+      <button class="btn" onclick="changePwd()">保存</button>
     </div>
   </div>
 </div>
@@ -293,7 +290,6 @@ async function refreshAll() {
     $("st_ssh").textContent = status.ssh_port;
     $("st_ver").textContent = "v" + status.version;
     $("panel_port_input").value = status.panel_port || "";
-    $("username_input").value = status.username || "";
     $("mode_sel").value = status.mode;
     $("st_ver").textContent = "v" + status.version;
     renderSvc(); renderRules(); loadSsh(); loadBf(); autoCheckUpgrade();
@@ -346,14 +342,6 @@ async function setPanelPort() {
     const target = `${location.protocol}//${location.hostname}:${port}`;
     setTimeout(() => { location.href = target; }, 3000);
   } catch (e) { toast("修改失败: " + e.message, "err"); }
-}
-async function setUsername() {
-  const name = $("username_input").value.trim();
-  if (!name) { toast("请输入用户名", "err"); return; }
-  try {
-    const d = await api("POST", "/api/username", { username: name });
-    toast(d.msg || "用户名已修改", "okk");
-  } catch (e) { toast(e.message, "err"); }
 }
 
 /* ---------- SSH 端口管理 ---------- */
@@ -518,13 +506,29 @@ async function delRule(id) {
   catch (e) { toast(e.message, "err"); }
 }
 
-/* ---------- 密码 ---------- */
+/* ---------- 账户设置（用户名 + 密码） ---------- */
 function openPwd() { $("pwd_modal").classList.remove("hidden"); }
-function closePwd() { $("pwd_modal").classList.add("hidden"); }
+function closePwd() {
+  $("pwd_modal").classList.add("hidden");
+  ["p_user", "p_user2", "p_old", "p_new", "p_new2"].forEach(id => $(id).value = "");
+}
 async function changePwd() {
+  const user = $("p_user").value.trim();
+  const user2 = $("p_user2").value.trim();
+  const oldp = $("p_old").value;
+  const newp = $("p_new").value;
+  const newp2 = $("p_new2").value;
+  if (user && user !== user2) { toast("两次输入的用户名不一致", "err"); return; }
+  if (newp && newp !== newp2) { toast("两次输入的密码不一致", "err"); return; }
+  if (!user && !newp) { toast("请填写要修改的用户名或密码（至少一项）", "err"); return; }
+  if (newp && newp.length < 8) { toast("新密码至少 8 位", "err"); return; }
   try {
-    await api("POST", "/api/password", { old_password: $("p_old").value, new_password: $("p_new").value });
-    toast("密码已修改", "okk"); closePwd(); $("p_old").value = ""; $("p_new").value = "";
+    const body = { old_password: oldp };
+    if (user) body.username = user;
+    if (newp) body.new_password = newp;
+    await api("POST", "/api/password", body);
+    toast("账户设置已更新，下次登录生效", "okk");
+    closePwd(); refreshAll();
   } catch (e) { toast(e.message, "err"); }
 }
 

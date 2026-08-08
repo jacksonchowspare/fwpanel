@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.7.8"
+CURRENT_VERSION = "1.7.9"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1328,22 +1328,35 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "msg": f"模式已切换为 {'严格' if mode == 'strict' else '宽松'}{extra}"})
 
     def _api_password(self):
-        """修改密码：{old_password, new_password}"""
+        """修改密码/用户名：{old_password, new_password?, username?}
+        新密码/新用户名至少提供一项（可只改其一）"""
         token = self._require_auth()
         if token is None:
             return
         data = self._read_json()
         old = data.get("old_password", "")
-        new = data.get("new_password", "")
         stored = self.server.config.get("password_hash", "")
         if not verify_password(old, stored):
             self._send(400, {"error": "原密码错误"})
             return
-        if len(new) < 8:
-            self._send(400, {"error": "新密码至少 8 位"})
+        new = data.get("new_password")
+        if new is not None:
+            new = str(new)
+            if len(new) < 8:
+                self._send(400, {"error": "新密码至少 8 位"})
+                return
+            self.server.config.set("password_hash", hash_password(new))
+        name = data.get("username")
+        if name is not None:
+            name = str(name).strip()
+            if not re.match(r"^[A-Za-z0-9_]{3,32}$", name):
+                self._send(400, {"error": "用户名需为 3-32 位字母、数字或下划线"})
+                return
+            self.server.config.set("username", name)
+        if new is None and name is None:
+            self._send(400, {"error": "未提供要修改的新密码或新用户名"})
             return
-        self.server.config.set("password_hash", hash_password(new))
-        self._send(200, {"ok": True, "msg": "密码已修改"})
+        self._send(200, {"ok": True, "msg": "账户设置已更新，下次登录生效"})
 
 
 # ------------------------------- 服务启动 -------------------------------
