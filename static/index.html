@@ -547,7 +547,10 @@ async function doUpgrade() {
 const SVCS = [["ssh", null, "tcp"], ["http", 80, "tcp"], ["https", 443, "tcp"], ["dns", 53, "udp"]];
 // 自定义端口服务：名称 -> 显示名（端口由用户填写）
 const CUSTOM_SVCS = [["x3ui", "3X-UI"], ["reality", "Reality"], ["socks5", "Socks5"]];
-function customSvcPort(name) { return parseInt($("cs_port_" + name).value, 10); }
+function customSvcPort(name) {
+  const el = $("cs_port_" + name);
+  return el ? parseInt(el.value, 10) : NaN;   // 首次渲染时输入框尚不存在，返回 NaN 而非报错
+}
 function csPortChanged(name) {
   const p = customSvcPort(name);
   const proto = $("cs_proto_" + name).value;
