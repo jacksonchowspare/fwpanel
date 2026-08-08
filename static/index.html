@@ -25,9 +25,9 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 .card .v { font-size: 18px; font-weight: 600; margin-top: 4px; }
 .card .v.ok { color: var(--accent2); } .card .v.off { color: var(--danger); }
 .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; margin-bottom: 20px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch; margin-bottom: 20px; }
 .grid2 .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.grid2 .panel { margin-bottom: 0; }
+.grid2 .panel { margin-bottom: 0; flex: 1; }
 @media (max-width: 1080px) { .grid2 { grid-template-columns: 1fr; } }
 /* 添加规则表单：等分布局占满全宽，IP 输入框弹性伸展 */
 #add_rule_row { display: grid; grid-template-columns: 150px 100px 130px 1fr 170px auto; gap: 8px; align-items: center; }
@@ -141,10 +141,18 @@ tr:hover td { background: #1d2733; }
         <button class="btn" onclick="addProxy()">添加代理</button>
         <span style="color:var(--muted);font-size:12px;align-self:center">自动放行 443 并生成 nginx 配置（80 需自行放行，证书申请需要）</span>
       </div>
+      <div class="form-row" style="margin-bottom:10px">
+        <input id="px_search" placeholder="🔍 搜索代理（域名 / 目标）" style="width:240px" oninput="pxSearchChanged()">
+      </div>
       <table>
         <thead><tr><th>域名</th><th>目标</th><th>SSL 证书</th><th>状态</th><th>操作</th></tr></thead>
         <tbody id="proxy_rows"><tr><td colspan="5" style="color:var(--muted)">暂无代理</td></tr></tbody>
       </table>
+      <div id="px_pager" style="display:none;margin-top:10px;align-items:center;justify-content:center;gap:10px">
+        <button class="btn mini ghost" onclick="pxPageGo(-1)" id="px_prev">上一页</button>
+        <span style="color:var(--muted);font-size:12px" id="px_pageinfo">1/1</span>
+        <button class="btn mini ghost" onclick="pxPageGo(1)" id="px_next">下一页</button>
+      </div>
     </div>
 
     <div class="grid2">
@@ -228,6 +236,9 @@ tr:hover td { background: #1d2733; }
           </div>
 
           <div style="color:var(--muted);font-size:12px;margin-bottom:6px">🔒 当前封禁（自动 + 手动）</div>
+          <div class="form-row" style="margin-bottom:8px">
+            <input id="bf_search" placeholder="🔍 搜索封禁 IP" style="width:180px" oninput="bfSearchChanged()">
+          </div>
           <div id="bf_list" style="color:var(--muted);font-size:12px">当前无封禁 IP</div>
           <div id="bf_pager" style="display:none;margin-top:10px;align-items:center;justify-content:center;gap:10px">
             <button class="btn mini ghost" onclick="bfPageGo(-1)" id="bf_prev">上一页</button>
@@ -257,6 +268,9 @@ tr:hover td { background: #1d2733; }
 
     <div class="panel">
       <h2>📜 规则列表</h2>
+      <div class="form-row" style="margin-bottom:10px">
+        <input id="rule_search" placeholder="🔍 搜索规则（端口 / IP / 备注）" style="width:240px" oninput="ruleSearchChanged()">
+      </div>
       <table>
         <thead><tr><th>类型</th><th>协议</th><th>端口 / IP</th><th>备注</th><th>操作</th></tr></thead>
         <tbody id="rule_rows"></tbody>
@@ -406,6 +420,11 @@ async function refreshAll() {
 }
 
 /* ---------- 反向代理 ---------- */
+let pxPage = 1;
+const PX_PAGE_SIZE = 5;
+let pxSearch = "";
+function pxPageGo(d) { pxPage += d; loadProxy(); }
+function pxSearchChanged() { pxSearch = $("px_search").value.trim().toLowerCase(); pxPage = 1; loadProxy(); }
 async function loadProxy() {
   try {
     const d = await api("GET", "/api/proxy");
@@ -415,8 +434,21 @@ async function loadProxy() {
       + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装");
     $("px_install_row").style.display = (d.installed && d.certbot) ? "none" : "flex";
     const tbody = $("proxy_rows"); tbody.innerHTML = "";
-    if (!d.proxies.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无代理，添加一个开始</td></tr>'; return; }
-    for (const p of d.proxies) {
+    // 搜索过滤
+    const filtered = pxSearch ? d.proxies.filter(p =>
+      p.domain.toLowerCase().includes(pxSearch) ||
+      (p.target_host && p.target_host.toLowerCase().includes(pxSearch)) ||
+      String(p.target_port).includes(pxSearch)
+    ) : d.proxies;
+    // 分页：每页 5 条
+    const total = filtered.length;
+    const pages = Math.max(1, Math.ceil(total / PX_PAGE_SIZE));
+    if (pxPage > pages) pxPage = pages;
+    if (pxPage < 1) pxPage = 1;
+    const start = (pxPage - 1) * PX_PAGE_SIZE;
+    const pageList = filtered.slice(start, start + PX_PAGE_SIZE);
+    if (!pageList.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无代理，添加一个开始</td></tr>'; }
+    for (const p of pageList) {
       const tr = document.createElement("tr");
       const cert = p.cert_exists
         ? (p.cert_expiry ? `有效至 ${new Date(p.cert_expiry * 1000).toLocaleDateString()}` : "已签发")
@@ -432,6 +464,15 @@ async function loadProxy() {
         <td><label class="switch"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProxy('${p.id}', this.checked)"><span class="slider"></span></label></td>
         <td>${ipBtn}<button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
       tbody.appendChild(tr);
+    }
+    const pager = $("px_pager");
+    if (total > PX_PAGE_SIZE) {
+      pager.style.display = "flex";
+      $("px_pageinfo").textContent = `${pxPage}/${pages}（共 ${total} 条）`;
+      $("px_prev").disabled = pxPage <= 1;
+      $("px_next").disabled = pxPage >= pages;
+    } else {
+      pager.style.display = "none";
     }
   } catch (e) { /* 静默 */ }
 }
@@ -534,8 +575,10 @@ function fmtRemain(sec) {
 }
 let bfTimer = null;
 let bfPage = 1;
-const BF_PAGE_SIZE = 2;
+const BF_PAGE_SIZE = 5;
+let bfSearch = "";
 function bfPageGo(d) { bfPage += d; loadBf(); }
+function bfSearchChanged() { bfSearch = $("bf_search").value.trim().toLowerCase(); bfPage = 1; loadBf(); }
 function startBfCountdown() {
   if (bfTimer) clearInterval(bfTimer);
   bfTimer = setInterval(() => {
@@ -560,13 +603,20 @@ async function loadBf() {
       $("bf_pager").style.display = "none";
       return;
     }
-    // 分页：每页 2 条
-    const total = d.bans.length;
+    // 搜索过滤
+    const filtered = bfSearch ? d.bans.filter(b => b.ip.toLowerCase().includes(bfSearch)) : d.bans;
+    if (!filtered.length) {
+      list.innerHTML = "<div style=\"padding:8px 0\">无匹配的封禁 IP</div>";
+      $("bf_pager").style.display = "none";
+      return;
+    }
+    // 分页：每页 5 条
+    const total = filtered.length;
     const pages = Math.max(1, Math.ceil(total / BF_PAGE_SIZE));
     if (bfPage > pages) bfPage = pages;
     if (bfPage < 1) bfPage = 1;
     const start = (bfPage - 1) * BF_PAGE_SIZE;
-    list.innerHTML = d.bans.slice(start, start + BF_PAGE_SIZE).map(b =>
+    list.innerHTML = filtered.slice(start, start + BF_PAGE_SIZE).map(b =>
       `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px dashed var(--border)" data-until="${b.until}">
         <span style="color:#ff6b6b">🔒 ${b.ip} <span class="bf-remain" style="color:var(--muted)">（剩余 ${fmtRemain(b.remaining)}）</span></span>
         <button class="btn mini danger" onclick="unban('${b.ip}')">解封</button>
@@ -794,6 +844,8 @@ async function setMode() {
 let rulePage = 1;
 const RULE_PAGE_SIZE = 5;
 function rulePageGo(d) { rulePage += d; renderRules(); }
+let ruleSearch = "";
+function ruleSearchChanged() { ruleSearch = $("rule_search").value.trim().toLowerCase(); rulePage = 1; renderRules(); }
 function typeTag(r) {
   const map = { port_allow: ["tag allow", "放行端口"], port_deny: ["tag deny", "拒绝端口"], ip_allow: ["tag allow", "放行 IP"], ip_deny: ["tag deny", "拒绝 IP"] };
   const [cls, txt] = map[r.type] || ["", r.type];
@@ -808,13 +860,22 @@ async function renderRules() {
   const sshTr = document.createElement("tr");
   sshTr.innerHTML = `<td><span class="tag allow">SSH 保护</span></td><td>tcp</td><td><span class="tag prot">tcp/${sshPort}</span></td><td>防锁死保护</td><td><span style="color:var(--muted)">保护</span></td>`;
   tbody.appendChild(sshTr);
+  // 搜索过滤
+  const typeName = { port_allow: "放行端口", port_deny: "拒绝端口", ip_allow: "放行ip", ip_deny: "拒绝ip" };
+  const filtered = ruleSearch ? rules.filter(r =>
+    (r.port && String(r.port).includes(ruleSearch)) ||
+    (r.ip && r.ip.toLowerCase().includes(ruleSearch)) ||
+    (r.comment && r.comment.toLowerCase().includes(ruleSearch)) ||
+    (r.proto && r.proto.toLowerCase().includes(ruleSearch)) ||
+    (typeName[r.type] || "").includes(ruleSearch)
+  ) : rules;
   // 用户规则分页：每页 5 条
-  const total = rules.length;
+  const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / RULE_PAGE_SIZE));
   if (rulePage > pages) rulePage = pages;
   if (rulePage < 1) rulePage = 1;
   const start = (rulePage - 1) * RULE_PAGE_SIZE;
-  rules.slice(start, start + RULE_PAGE_SIZE).forEach((r) => {
+  filtered.slice(start, start + RULE_PAGE_SIZE).forEach((r) => {
     const tr = document.createElement("tr");
     const target = r.port ? `<span class="tag prot">${r.proto}/${r.port}</span>` : `<span class="tag ip">${r.ip}</span>`;
     const del = r.protected
