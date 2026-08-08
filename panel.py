@@ -29,6 +29,7 @@ fwpanel — 自研防火墙控制面板（适配 Debian 13 / nftables）
 import argparse
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -45,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.6.0"
+CURRENT_VERSION = "1.6.1"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -117,6 +118,15 @@ def verify_password(password, stored):
 
 def is_ipv6(ip):
     return ":" in ip
+
+
+def is_valid_ip_or_net(s):
+    """校验单个 IP 或 CIDR 网段（IPv4/IPv6），如 1.2.3.4、1.2.3.0/24、2001:db8::/32"""
+    try:
+        ipaddress.ip_network(s, strict=False)
+        return True
+    except ValueError:
+        return False
 
 
 # ------------------------------- 配置管理 -------------------------------
@@ -920,6 +930,9 @@ class PanelHandler(BaseHTTPRequestHandler):
             ip = str(data.get("ip", "")).strip()
             if not ip:
                 self._send(400, {"error": "IP 不能为空"})
+                return
+            if not is_valid_ip_or_net(ip):
+                self._send(400, {"error": "IP 或 IP 段格式无效（支持 1.2.3.4 / 1.2.3.0/24 / IPv6）"})
                 return
             rule["ip"] = ip
         self.server.store.add(rule)

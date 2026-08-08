@@ -487,6 +487,49 @@ class TestAPI(unittest.TestCase):
         finally:
             panel.subprocess.run = real
 
+    def test_ip_net_validation(self):
+        """IP/IP 段校验：单 IP 与 CIDR（IPv4/IPv6）合法，非法拒绝"""
+        for ok in ("1.2.3.4", "1.2.3.0/24", "10.0.0.0/8", "2001:db8::1",
+                   "2001:db8::/32", "0.0.0.0/0", "::/0"):
+            self.assertTrue(panel.is_valid_ip_or_net(ok), f"{ok} 应合法")
+        for bad in ("", "1.2.3.999", "1.2.3.0/33", "999.1.1.1", "abc",
+                    "1.2.3.4/24/32", "2001:db8::/129"):
+            self.assertFalse(panel.is_valid_ip_or_net(bad), f"{bad} 应非法")
+
+    def test_ip_net_rule_render(self):
+        """IP 段黑名单/白名单渲染（IPv4+IPv6 CIDR）"""
+        self.store.rules = [
+            {"id": "1", "type": "ip_deny", "ip": "1.2.3.0/24", "comment": "封禁段"},
+            {"id": "2", "type": "ip_deny", "ip": "2001:db8::/32", "comment": "封禁v6段"},
+            {"id": "3", "type": "ip_allow", "ip": "10.0.0.0/8", "comment": "白名单段"},
+        ]
+        text = self.store.render(self.cfg)
+        self.assertIn("ip saddr 1.2.3.0/24 drop   # 封禁段", text)
+        self.assertIn("ip6 saddr 2001:db8::/32 drop   # 封禁v6段", text)
+        self.assertIn("ip saddr 10.0.0.0/8 accept   # 白名单段", text)
+
+    def test_ip_net_api(self):
+        """API 添加 IP 段规则 + 非法格式拒绝"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/rules",
+                            {"type": "ip_deny", "ip": "203.0.113.0/24", "comment": "攻击段"},
+                            token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r.get("ip") == "203.0.113.0/24" for r in d["rules"]))
+        # 非法格式
+        code, d = self._req("POST", "/api/rules",
+                            {"type": "ip_deny", "ip": "1.2.3.0/33"}, token=token)
+        self.assertEqual(code, 400)
+        # 清理
+        code, d = self._req("GET", "/api/rules", token=token)
+        for r in d["rules"]:
+            if r.get("ip") == "203.0.113.0/24":
+                self._req("DELETE", f"/api/rules/{r['id']}", token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
