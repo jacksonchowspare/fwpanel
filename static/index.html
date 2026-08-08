@@ -257,7 +257,8 @@ async function refreshAll() {
     $("panel_port_input").value = status.panel_port || "";
     $("username_input").value = status.username || "";
     $("mode_sel").value = status.mode;
-    renderSvc(); renderRules(); loadSsh();
+    $("cur_ver").textContent = "v" + status.version;
+    renderSvc(); renderRules(); loadSsh(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
 
@@ -314,15 +315,31 @@ async function applySshPort() {
 
 /* ---------- 系统更新 ---------- */
 let upgradeInfo = null;
+let lastUpgradeCheck = 0;
 async function checkUpgrade() {
+  const now = Date.now();
+  if (!upgradeInfo && now - lastUpgradeCheck < 3000) return;  // 防连点
+  lastUpgradeCheck = now;
   try {
     const d = await api("GET", "/api/upgrade/check");
     upgradeInfo = d;
     $("cur_ver").textContent = "v" + d.current;
     $("latest_ver").textContent = d.update_available ? "v" + d.latest : "已是最新";
     $("btn_upgrade").disabled = !d.update_available;
-    toast(d.update_available ? `发现新版本 v${d.latest}，可一键升级` : "已是最新版本", d.update_available ? "okk" : "");
+    if (d.update_available) toast(`发现新版本 v${d.latest}，可一键升级`, "okk");
   } catch (e) { toast("检查更新失败: " + e.message, "err"); }
+}
+/* 登录后自动检测（带 60 秒节流，不阻塞页面） */
+async function autoCheckUpgrade() {
+  if (!upgradeInfo && Date.now() - lastUpgradeCheck < 60000) return;
+  try {
+    const d = await api("GET", "/api/upgrade/check");
+    upgradeInfo = d;
+    $("cur_ver").textContent = "v" + d.current;
+    $("latest_ver").textContent = d.update_available ? "v" + d.latest : "已是最新";
+    $("btn_upgrade").disabled = !d.update_available;
+    if (d.update_available) toast(`发现新版本 v${d.latest}，可一键升级`, "okk");
+  } catch (e) { /* 网络失败静默，手动可重试 */ }
 }
 async function doUpgrade() {
   if (!upgradeInfo || !upgradeInfo.update_available) return;
