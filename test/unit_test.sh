@@ -48,6 +48,14 @@ PANEL_PORT="17890"
 parse_args -p 19001
 [ "$PANEL_PORT" = "19001" ] && ok "参数覆盖环境变量" || bad "参数未生效"
 
+echo "== check_root 非root无sudo应报错（子shell） =="
+if [ "$(id -u)" -ne 0 ]; then
+    ( PATH=/nonexistent bash -c "source '$TMPF'; check_root" >/dev/null 2>&1 ) \
+        && bad "非root无sudo未拦截" || ok "已拦截（提示切换root）"
+else
+    echo "  （root 环境跳过）"
+fi
+
 echo "== check_os 发行版识别（本机） =="
 DISTRO_ID="unknown"; PKG_MGR=""
 check_os

@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.19.0"
+readonly SCRIPT_VERSION="1.19.1"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -67,8 +67,25 @@ trap err_trap ERR
 # ============================== 环境检测 ==============================
 
 check_root() {
-    [ "$(id -u)" -eq 0 ] || error "请使用 root 权限运行（sudo bash $0）"
-    log_info "权限检查通过（root）"
+    if [ "$(id -u)" -eq 0 ]; then
+        # root 用户：确保 sudo 可用（便于其他用户提权），缺失则自动安装
+        if ! command -v sudo >/dev/null 2>&1; then
+            log_warn "未检测到 sudo，自动安装（root 可直接使用，其他用户可借此提权）..."
+            install_pkgs "sudo" || log_warn "sudo 安装失败（root 直接使用不受影响）"
+        fi
+        log_info "权限检查通过（root）"
+        return 0
+    fi
+    # 非 root 用户
+    if ! command -v sudo >/dev/null 2>&1; then
+        error "当前用户非 root 且未安装 sudo，无法提权安装。请先切换到 root（su -）后重新执行"
+    fi
+    if [ ! -f "$0" ]; then
+        error "检测到管道安装模式（curl | bash）且当前非 root，请改用：curl -sSL <安装地址> | sudo bash"
+    fi
+    # 有 sudo：自动提权重跑自身（保留原参数）
+    log_warn "非 root 用户运行，自动通过 sudo 提权执行 ..."
+    exec sudo bash "$0" "${SCRIPT_ARGS[@]}"
 }
 
 check_os() {
@@ -136,7 +153,7 @@ check_existing() {
 
 do_check() {
     echo "================== $SCRIPT_NAME v$SCRIPT_VERSION 环境体检 =================="
-    check_root; check_os; check_arch; check_tools; check_existing
+    check_os; check_root; check_arch; check_tools; check_existing
     echo "==========================================================================="
     echo "体检通过，可执行: sudo bash $0"
 }
@@ -427,7 +444,7 @@ print_summary() {
 
 do_install() {
     echo "================== $SCRIPT_NAME v$SCRIPT_VERSION =================="
-    check_root; check_os; check_arch; check_tools; check_existing
+    check_os; check_root; check_arch; check_tools; check_existing
     resolve_params
     install_deps
     deploy_files
@@ -470,6 +487,7 @@ do_change_password() {
 # ============================== 入口 ==============================
 
 main() {
+    SCRIPT_ARGS=("$@")
     init_params
     parse_args "$@"
     case "$ACTION" in
