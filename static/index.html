@@ -392,7 +392,12 @@ function typeTag(r) {
 async function renderRules() {
   const { rules } = await api("GET", "/api/rules");
   const tbody = $("rule_rows"); tbody.innerHTML = "";
-  $("no_rules").style.display = rules.length ? "none" : "block";
+  $("no_rules").style.display = "none";   // SSH 保护常驻，列表不会为空
+  // 第一行：SSH 保护（跟随当前 SSH 端口，防锁死不可删除）
+  const sshPort = (status && status.ssh_port) || 22;
+  const sshTr = document.createElement("tr");
+  sshTr.innerHTML = `<td><span class="tag allow">SSH 保护</span></td><td>tcp</td><td><span class="tag prot">tcp/${sshPort}</span></td><td>防锁死保护</td><td><span style="color:var(--muted)">保护</span></td>`;
+  tbody.appendChild(sshTr);
   rules.forEach((r, i) => {
     const tr = document.createElement("tr");
     const target = r.port ? `<span class="tag prot">${r.proto}/${r.port}</span>` : `<span class="tag ip">${r.ip}</span>`;
