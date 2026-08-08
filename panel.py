@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.7.9"
+CURRENT_VERSION = "1.8.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -830,7 +830,9 @@ class PanelHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/" or path == "/index.html":
-            self._serve_static()
+            self._serve_static("index.html")
+        elif path == "/favicon.ico":
+            self._serve_static("favicon.ico")
         elif path == "/api/status":
             self._api_status()
         elif path == "/api/upgrade/check":
@@ -894,13 +896,21 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(404, {"error": "Not Found"})
 
     # ---------- 静态页面 ----------
-    def _serve_static(self):
-        index = os.path.join(STATIC_DIR, "index.html")
+    def _serve_static(self, name):
+        path = os.path.join(STATIC_DIR, name)
         try:
-            with open(index, "rb") as f:
-                self._send(200, f.read(), "text/html; charset=utf-8")
+            with open(path, "rb") as f:
+                data = f.read()
         except FileNotFoundError:
-            self._send(500, {"error": "前端页面缺失，请检查安装完整性"})
+            self._send(404, {"error": "Not Found"})
+            return
+        if name.endswith(".html"):
+            ctype = "text/html; charset=utf-8"
+        elif name.endswith(".ico"):
+            ctype = "image/x-icon"
+        else:
+            ctype = "application/octet-stream"
+        self._send(200, data, ctype)
 
     # ---------- API ----------
     def _api_login(self):

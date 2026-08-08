@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.7.9"
+readonly SCRIPT_VERSION="1.8.0"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -286,26 +286,33 @@ fetch_source() {
 
 deploy_files() {
     log_info "部署程序文件到 $APP_DIR ..."
-    local script_dir src_py src_html tmp_src=""
+    local script_dir src_py src_html src_ico tmp_src=""
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
     src_py="$script_dir/panel.py"
     src_html="$script_dir/static/index.html"
+    src_ico="$script_dir/static/favicon.ico"
 
     # 管道一键安装（curl | sudo bash）时只有 install.sh 自身，配套文件需自动下载
     if [ ! -f "$src_py" ] || [ ! -f "$src_html" ]; then
-        log_warn "未找到配套文件（管道安装模式），自动下载 panel.py / index.html ..."
+        log_warn "未找到配套文件（管道安装模式），自动下载 panel.py / index.html / favicon.ico ..."
         tmp_src="$(mktemp -d)"
         fetch_source "$tmp_src/panel.py" "panel.py" \
             || error "下载 panel.py 失败，请检查网络，或改用 tar 包安装"
         fetch_source "$tmp_src/index.html" "static/index.html" \
             || error "下载 index.html 失败，请检查网络"
+        fetch_source "$tmp_src/favicon.ico" "static/favicon.ico" \
+            || log_warn "下载 favicon.ico 失败（不影响安装，将使用默认图标）"
         src_py="$tmp_src/panel.py"
         src_html="$tmp_src/index.html"
+        src_ico="$tmp_src/favicon.ico"
     fi
 
     mkdir -p "$APP_DIR/static"
     install -m 755 "$src_py" "$APP_DIR/panel.py"
     install -m 644 "$src_html" "$APP_DIR/static/index.html"
+    if [ -f "$src_ico" ]; then
+        install -m 644 "$src_ico" "$APP_DIR/static/favicon.ico"
+    fi
     [ -n "$tmp_src" ] && rm -rf "$tmp_src"
     log_info "文件部署完成"
 }
