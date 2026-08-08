@@ -295,6 +295,21 @@ tr:hover td { background: #1d2733; }
   </div>
 </div>
 
+<!-- 修改备注弹窗 -->
+<div id="cmt_modal" class="modal-mask hidden">
+  <div class="modal" style="width:380px">
+    <h3>✏️ 修改备注</h3>
+    <div style="margin-bottom:16px">
+      <div style="color:var(--muted);font-size:12px;margin-bottom:6px">规则备注</div>
+      <input id="cmt_input" placeholder="备注内容" style="width:100%" onkeydown="if(event.key==='Enter')saveCmt()">
+    </div>
+    <div class="btnrow">
+      <button class="btn ghost" onclick="closeCmtModal()">取消</button>
+      <button class="btn" onclick="saveCmt()">保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = "";
 let token = localStorage.getItem("fw_token") || "";
@@ -693,7 +708,7 @@ async function renderRules() {
     const target = r.port ? `<span class="tag prot">${r.proto}/${r.port}</span>` : `<span class="tag ip">${r.ip}</span>`;
     const del = r.protected
       ? `<span style="color:var(--muted)">保护</span>`
-      : `<button class="btn mini" onclick="editRule('${r.id}', this)">修改</button> <button class="btn mini danger" onclick="delRule('${r.id}')">删除</button>`;
+      : `<button class="btn mini" onclick="editRule('${r.id}')">修改</button> <button class="btn mini danger" onclick="delRule('${r.id}')">删除</button>`;
     tr.innerHTML = `<td>${typeTag(r)}</td><td>${r.proto || "-"}</td><td>${target}</td><td><span id="cmt_${r.id}">${r.comment || ""}</span></td><td>${del}</td>`;
     tbody.appendChild(tr);
   });
@@ -708,17 +723,23 @@ async function renderRules() {
     pager.style.display = "none";
   }
 }
-async function editRule(id, btn) {
+let editRuleId = null;
+function editRule(id) {
+  editRuleId = id;
   const cur = ($("cmt_" + id) && $("cmt_" + id).textContent) || "";
-  const newComment = prompt("修改备注：", cur);
-  if (newComment === null) return;
-  btn.disabled = true;
+  $("cmt_input").value = cur;
+  $("cmt_modal").classList.remove("hidden");
+  $("cmt_input").focus();
+  $("cmt_input").select();
+}
+function closeCmtModal() { $("cmt_modal").classList.add("hidden"); editRuleId = null; }
+async function saveCmt() {
+  if (!editRuleId) return;
   try {
-    const d = await api("POST", "/api/rules/" + id, { comment: newComment });
+    const d = await api("POST", "/api/rules/" + editRuleId, { comment: $("cmt_input").value });
     toast(d.msg || "备注已修改", "okk");
-    renderRules();
+    closeCmtModal(); renderRules();
   } catch (e) { toast(e.message, "err"); }
-  btn.disabled = false;
 }
 async function addRule() {
   const body = { type: $("r_type").value, comment: $("r_comment").value };
