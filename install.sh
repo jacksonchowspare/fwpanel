@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="fwpanel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.1.0"
+readonly SCRIPT_VERSION="1.1.1"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -100,7 +100,7 @@ check_tools() {
 }
 
 check_existing() {
-    if [ -d "$APP_DIR" ] || systemctl list-unit-files 2>/dev/null | grep -q "$SERVICE_NAME"; then
+    if [ -f "$APP_DIR/panel.py" ] || systemctl list-unit-files 2>/dev/null | grep -q "$SERVICE_NAME"; then
         log_warn "检测到 fwpanel 已安装，跳过安装。"
         log_info "查看服务: systemctl status $SERVICE_NAME"
         log_info "重置密码: sudo bash $0 --change-password"
@@ -223,13 +223,46 @@ install_deps() {
     log_info "依赖就绪（python3 + nftables）"
 }
 
+download_file() {
+    local dest="$1" url="$2"
+    curl -fsSL --connect-timeout 10 --retry 2 -o "$dest" "$url" || return 1
+    [ -s "$dest" ] || return 1
+}
+
+fetch_source() {
+    # 三级源自动回退：GitHub raw → jsDelivr CDN → ghproxy 镜像（国内友好）
+    local dest="$1" path="$2"
+    download_file "$dest" "https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/$path" && return 0
+    log_warn "GitHub 直连失败，切换 jsDelivr CDN ..."
+    download_file "$dest" "https://cdn.jsdelivr.net/gh/jacksonchowspare/fwpanel@main/$path" && return 0
+    log_warn "jsDelivr 失败，切换 ghproxy 镜像 ..."
+    download_file "$dest" "https://ghproxy.com/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/$path" && return 0
+    return 1
+}
+
 deploy_files() {
     log_info "部署程序文件到 $APP_DIR ..."
+    local script_dir src_py src_html tmp_src=""
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+    src_py="$script_dir/panel.py"
+    src_html="$script_dir/static/index.html"
+
+    # 管道一键安装（curl | sudo bash）时只有 install.sh 自身，配套文件需自动下载
+    if [ ! -f "$src_py" ] || [ ! -f "$src_html" ]; then
+        log_warn "未找到配套文件（管道安装模式），自动下载 panel.py / index.html ..."
+        tmp_src="$(mktemp -d)"
+        fetch_source "$tmp_src/panel.py" "panel.py" \
+            || error "下载 panel.py 失败，请检查网络，或改用 tar 包安装"
+        fetch_source "$tmp_src/index.html" "static/index.html" \
+            || error "下载 index.html 失败，请检查网络"
+        src_py="$tmp_src/panel.py"
+        src_html="$tmp_src/index.html"
+    fi
+
     mkdir -p "$APP_DIR/static"
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    install -m 755 "$script_dir/panel.py" "$APP_DIR/panel.py"
-    install -m 644 "$script_dir/static/index.html" "$APP_DIR/static/index.html"
+    install -m 755 "$src_py" "$APP_DIR/panel.py"
+    install -m 644 "$src_html" "$APP_DIR/static/index.html"
+    [ -n "$tmp_src" ] && rm -rf "$tmp_src"
     log_info "文件部署完成"
 }
 

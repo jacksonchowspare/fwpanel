@@ -29,10 +29,15 @@
 ## 一键安装
 
 ```bash
-# 本机已有安装包目录时
-sudo bash install.sh
+# 方式一：管道一键安装（推荐）
+# 脚本会自动下载配套文件（GitHub → jsDelivr → ghproxy 三级源回退）
+curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash
 
-# 或指定端口 / 开放远程访问
+# 方式二：tar 包安装（离线 / GitHub 不通时）
+curl -sSL https://github.com/jacksonchowspare/fwpanel/releases/latest/download/fwpanel-1.1.1.tar.gz -o fwpanel.tar.gz
+tar xzf fwpanel.tar.gz && cd fwpanel && sudo bash install.sh
+
+# 方式三：指定端口 / 开放远程访问
 sudo bash install.sh -p 17890 --bind 0.0.0.0
 ```
 
