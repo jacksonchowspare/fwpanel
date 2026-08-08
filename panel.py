@@ -1528,24 +1528,6 @@ class PanelHandler(BaseHTTPRequestHandler):
         state = "已启用" if bf["enabled"] else "已停用"
         self._send(200, {"ok": True, "msg": f"SSH 防爆破{state}（失败 {bf['max_fails']} 次封禁 {bf['ban_seconds']} 秒）"})
 
-    def _api_bruteforce_unban(self, ip):
-        """手动解封 IP"""
-        token = self._require_auth()
-        if token is None:
-            return
-        store = self.server.store
-        store.rules = [r for r in store.rules
-                       if not (r.get("type") == "ip_deny" and r.get("ip") == ip
-                               and r.get("comment") == BAN_COMMENT)]
-        bans = load_bans()
-        removed = ip in bans
-        if removed:
-            del bans[ip]
-            save_bans(bans)
-        store.save()
-        self.server.nft.apply()
-        self._send(200, {"ok": True, "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
-
     def _api_firewall(self):
         """一键开启/关闭防火墙：{enabled: true|false}
         关闭=删除 nftables 表（规则配置保留，开启时恢复）；开启=重新加载规则"""
