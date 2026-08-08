@@ -609,6 +609,22 @@ class TestAPI(unittest.TestCase):
         # 恢复默认
         self._req("POST", "/api/bruteforce", {"enabled": False}, token=token)
 
+    def test_detect_distro(self):
+        """发行版自动识别：读 /etc/os-release，返回非空"""
+        d = panel.detect_distro()
+        self.assertIsInstance(d, str)
+        self.assertTrue(len(d) > 0, "发行版识别不应为空")
+
+    def test_status_includes_distro(self):
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("GET", "/api/status", token=token)
+        self.assertEqual(code, 200)
+        self.assertTrue(d.get("distro"), "status 应包含发行版信息")
+        self.assertTrue(d.get("hostname"))
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

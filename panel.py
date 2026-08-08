@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.7.1"
+CURRENT_VERSION = "1.7.2"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -118,6 +118,22 @@ def verify_password(password, stored):
 
 def is_ipv6(ip):
     return ":" in ip
+
+
+def detect_distro():
+    """自动识别系统发行版（读 /etc/os-release），如 'Debian 13'、'Ubuntu 26.04'、'Arch Linux'"""
+    try:
+        info = {}
+        with open("/etc/os-release") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    info[k] = v.strip('"')
+        name = info.get("NAME", "").split()[0] if info.get("NAME") else info.get("ID", "Linux")
+        ver = info.get("VERSION_ID", "").strip()
+        return f"{name} {ver}".strip() if ver else name
+    except Exception:
+        return "Linux"
 
 
 def is_valid_ip_or_net(s):
@@ -890,6 +906,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             mem = ""
         self._send(200, {
             "hostname": hostname,
+            "distro": detect_distro(),
             "mode": cfg.get("mode", "permissive"),
             "ssh_port": int(cfg.get("ssh_port", SSH_PORT_DEFAULT)),
             "loaded": nft.status(),

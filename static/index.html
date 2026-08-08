@@ -87,7 +87,7 @@ tr:hover td { background: #1d2733; }
     <div class="topbar">
       <div>
         <h1><span class="dot"></span>fwpanel <span style="font-size:12px;color:var(--muted)" id="hostname"></span></h1>
-        <div class="sub">Debian 13 · nftables 防火墙控制面板</div>
+        <div class="sub" id="sub_title">nftables 防火墙控制面板</div>
       </div>
       <div class="actions">
         <button class="btn ghost" onclick="openPwd()">修改密码</button>
@@ -266,6 +266,7 @@ async function refreshAll() {
   try {
     status = await api("GET", "/api/status");
     $("hostname").textContent = "· " + status.hostname;
+    $("sub_title").textContent = (status.distro || "Linux") + " · nftables 防火墙控制面板";
     $("st_fw").textContent = status.loaded ? "已生效" : "未加载";
     $("st_fw").className = "v " + (status.loaded ? "ok" : "off");
     $("st_mode").textContent = status.mode === "strict" ? "严格（默认拒绝）" : "宽松（默认放行）";
