@@ -772,6 +772,32 @@ class TestAPI(unittest.TestCase):
         if os.path.exists(panel.PROXIES_FILE):
             os.remove(panel.PROXIES_FILE)
 
+    def test_proxy_cert_paths(self):
+        """有证书的代理返回公钥/私钥路径"""
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/proxy",
+                            {"domain": "path.example.com", "target_host": "127.0.0.1",
+                             "target_port": 9002}, token=token)
+        self.assertEqual(code, 200, d)
+        pid = d["proxy"]["id"]
+        real_exists = panel.cert_files_exist
+        panel.cert_files_exist = lambda dom: dom == "path.example.com"
+        try:
+            code, d = self._req("GET", "/api/proxy", token=token)
+            p = d["proxies"][0]
+            self.assertEqual(p["cert_path"], "/etc/letsencrypt/live/path.example.com/fullchain.pem")
+            self.assertEqual(p["key_path"], "/etc/letsencrypt/live/path.example.com/privkey.pem")
+        finally:
+            panel.cert_files_exist = real_exists
+            self._req("DELETE", f"/api/proxy/{pid}", token=token)
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

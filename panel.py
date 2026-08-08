@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.14.2"
+CURRENT_VERSION = "1.14.3"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1548,8 +1548,12 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         items = []
         for p in ProxyStore().proxies:
-            items.append({**p, "cert_expiry": cert_status(p["domain"]),
-                          "cert_exists": cert_files_exist(p["domain"])})
+            item = {**p, "cert_expiry": cert_status(p["domain"]),
+                    "cert_exists": cert_files_exist(p["domain"])}
+            if item["cert_exists"]:
+                item["cert_path"] = f"{LE_LIVE}/{p['domain']}/fullchain.pem"
+                item["key_path"] = f"{LE_LIVE}/{p['domain']}/privkey.pem"
+            items.append(item)
         self._send(200, {
             "installed": nginx_available(),
             "active": nginx_active(),
