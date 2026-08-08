@@ -20,12 +20,19 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="fwpanel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.5.8"
+readonly SCRIPT_VERSION="1.6.0"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
 readonly SERVICE_NAME="fwpanel.service"
 readonly MIN_DEBIAN_VERSION=11
+readonly SUPPORTED_DISTROS="debian ubuntu arch fedora centos rocky alma rhel manjaro endeavouros"
+
+# 发行版与包管理器（check_os 中填充）
+DISTRO_ID="unknown"
+DISTRO_NAME=""
+PKG_MGR=""
+PY_PKG="python3"
 
 # ------------------------------ 变量 ------------------------------
 ACTION="install"
@@ -67,17 +74,32 @@ check_os() {
     [ -r /etc/os-release ] || error "无法读取 /etc/os-release"
     # shellcheck disable=SC1091
     . /etc/os-release
-    if [ "${ID:-}" != "debian" ]; then
-        [ "$FORCE" = "1" ] && log_warn "非 Debian 系统（--force 跳过，风险自负）" \
-            || error "当前系统不是 Debian。仅适配 Debian 11/12/13，确认兼容可加 --force"
-    fi
-    local ver="${VERSION_ID:-0}"; ver="${ver%%.*}"
-    if [[ "$ver" =~ ^[0-9]+$ ]] && [ "$ver" -lt "$MIN_DEBIAN_VERSION" ]; then
-        [ "$FORCE" = "1" ] && log_warn "Debian $ver 低于推荐版本（--force 跳过）" \
-            || error "Debian $ver 版本过低，要求 $MIN_DEBIAN_VERSION 及以上"
-    fi
-    if [ "$ver" = "13" ]; then log_info "系统: Debian 13 (Trixie) ✓ 完全适配"
-    else log_info "系统: Debian $ver（兼容模式）"; fi
+    DISTRO_ID="${ID:-unknown}"
+    DISTRO_NAME="${NAME:-$DISTRO_ID}"
+    case "$DISTRO_ID" in
+        debian|ubuntu)            PKG_MGR="apt";    PY_PKG="python3" ;;
+        arch|manjaro|endeavouros) PKG_MGR="pacman"; PY_PKG="python"  ;;
+        fedora|centos|rocky|alma|rhel) PKG_MGR="dnf"; PY_PKG="python3" ;;
+        *)
+            [ "$FORCE" = "1" ] && log_warn "未知发行版 $DISTRO_ID（--force 跳过，风险自负）" \
+                || error "不支持的系统: $DISTRO_ID（支持: $SUPPORTED_DISTROS，确认兼容可加 --force）"
+            ;;
+    esac
+    log_info "系统: $DISTRO_NAME ($DISTRO_ID)"
+    case "$DISTRO_ID" in
+        debian)
+            local ver="${VERSION_ID:-0}"; ver="${ver%%.*}"
+            if [[ "$ver" =~ ^[0-9]+$ ]] && [ "$ver" -lt "$MIN_DEBIAN_VERSION" ]; then
+                [ "$FORCE" = "1" ] && log_warn "Debian $ver 低于推荐版本（--force 跳过）" \
+                    || error "Debian $ver 版本过低，要求 $MIN_DEBIAN_VERSION 及以上"
+            fi
+            if [ "$ver" = "13" ]; then log_info "Debian 13 (Trixie) ✓ 完全适配"
+            else log_info "Debian $ver（兼容模式）"; fi
+            ;;
+        ubuntu)                    log_info "Ubuntu ${VERSION_ID:-}（兼容模式）" ;;
+        arch|manjaro|endeavouros)  log_info "Arch 系（滚动更新，兼容模式）" ;;
+        fedora|centos|rocky|alma|rhel) log_info "$DISTRO_NAME ${VERSION_ID:-}（兼容模式）" ;;
+    esac
 }
 
 check_arch() {
@@ -218,14 +240,29 @@ resolve_params() {
 # ============================== 安装 ==============================
 
 install_deps() {
-    # 缺什么装什么（Debian 最小化安装可能没有 python3/nftables）
+    # 缺什么装什么（最小化安装可能没有 python3/nftables），按发行版选择包管理器
     local pkgs=()
-    command -v python3 >/dev/null 2>&1 || pkgs+=(python3)
-    command -v nft >/dev/null 2>&1 || pkgs+=(nftables)
+    if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+        pkgs+=("$PY_PKG")
+    fi
+    command -v nft >/dev/null 2>&1 || pkgs+=("nftables")
     if [ "${#pkgs[@]}" -gt 0 ]; then
-        log_info "安装依赖: ${pkgs[*]} ..."
-        apt-get update -y
-        DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}"
+        log_info "安装依赖（$PKG_MGR）: ${pkgs[*]} ..."
+        case "$PKG_MGR" in
+            apt)
+                apt-get update -y
+                DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}"
+                ;;
+            pacman)
+                pacman -Sy --noconfirm "${pkgs[@]}"
+                ;;
+            dnf)
+                dnf install -y "${pkgs[@]}"
+                ;;
+            *)
+                error "未检测到支持的包管理器，请手动安装: ${pkgs[*]}"
+                ;;
+        esac
     fi
     log_info "依赖就绪（python3 + nftables）"
 }

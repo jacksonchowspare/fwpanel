@@ -619,6 +619,26 @@ class TestUpgrade(unittest.TestCase):
         self.assertFalse(panel.version_gt("1.2.0", "1.2.0"))
         self.assertFalse(panel.version_gt("1.1.3", "1.2.0"))
 
+    def test_ssh_service_name(self):
+        """SSH 服务名检测：有 ssh.service 用 ssh，否则 sshd"""
+        import subprocess as sp
+        real = panel.subprocess.run
+        def fake(cmd, *a, **k):
+            out = "ssh.service enabled\nsshd.service enabled\n" if "list-unit" in " ".join(cmd) else ""
+            return sp.CompletedProcess(cmd, 0, stdout=out, stderr="")
+        panel.subprocess.run = fake
+        try:
+            self.assertEqual(panel.ssh_service_name(), "ssh")
+        finally:
+            panel.subprocess.run = real
+        def fake2(cmd, *a, **k):
+            return sp.CompletedProcess(cmd, 0, stdout="sshd.service enabled\n", stderr="")
+        panel.subprocess.run = fake2
+        try:
+            self.assertEqual(panel.ssh_service_name(), "sshd")
+        finally:
+            panel.subprocess.run = real
+
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""
         cfg = make_cfg()

@@ -1,7 +1,15 @@
-# fwpanel — 自研防火墙控制面板（Debian 13）
+# fwpanel — 自研防火墙控制面板（多发行版）
 
 > 完全自研的 Web 防火墙管理面板：Python 标准库 + nftables，零第三方依赖，
-> 不依赖 firewalld/ufw/1Panel 等任何外部面板。适配 Debian 13 (Trixie)，兼容 11/12。
+> 不依赖 firewalld/ufw/1Panel 等任何外部面板。
+
+## 支持系统
+
+- ✅ **Debian** 11 / 12 / 13（Trixie 完全适配）
+- ✅ **Ubuntu** 20.04+（apt）
+- ✅ **Arch Linux** / Manjaro（pacman）
+- ✅ **Fedora** / CentOS / Rocky / Alma / RHEL（dnf）
+- 架构：x86_64 / aarch64；需要 systemd + python3 + nftables
 
 ## 特性
 
@@ -10,7 +18,7 @@
 - ✅ **防锁死保护**：SSH(22) 放行规则永远存在且不可删除，改端口只需改配置
 - ✅ **一键开放端口**：面板 ⚡ 快捷区 / CLI `fwpanel open-port 8080` / 安装参数 `--open-port` 三入口
 - ✅ **TCP+UDP 同时开放**：一键开放可选 TCP / UDP / TCP+UDP（both）
-- ✅ **SSH 端口管理**：面板内修改保护端口；可一键同步修改系统 SSH 端口（防锁死：切换时旧端口临时放行）
+- ✅ **SSH 端口管理**：面板内修改保护端口；可一键同步修改系统 SSH 端口（防锁死：切换时旧端口临时放行，检测到新端口连接后 10 分钟自动清理旧端口规则）
 - ✅ 两种模式：宽松（默认放行，按需拒绝）/ 严格（默认拒绝，白名单放行）
 - ✅ 端口放行/拒绝、IP 白名单/黑名单（支持 IPv6）
 - ✅ 服务模板快捷开关：SSH/HTTP/HTTPS/DNS/Mail/IMAP/SMTPS

@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -44,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.5.8"
+CURRENT_VERSION = "1.6.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -558,6 +559,18 @@ def watch_ssh_switch(old_port, new_port, confirm_delay=600, wait_timeout=3600):
     log(f"等待新 SSH 端口 {new_port} 连接超时（{wait_timeout}s），保留旧端口 {old_port} 规则，保住 SSH 通道")
 
 
+def ssh_service_name():
+    """检测系统 SSH 服务名：Debian/Ubuntu 是 ssh，Arch/Fedora 等是 sshd"""
+    try:
+        r = subprocess.run(["systemctl", "list-unit-files"],
+                           capture_output=True, text=True, timeout=5)
+        if re.search(r"^ssh\.service\s", r.stdout, re.M):
+            return "ssh"
+    except Exception:
+        pass
+    return "sshd"
+
+
 def apply_sshd_port(port):
     """修改系统 SSH 服务端口：写入 sshd_config.d 并重启 ssh。返回 (ok, msg)"""
     if not (1 <= port <= 65535):
@@ -567,10 +580,11 @@ def apply_sshd_port(port):
         conf = os.path.join(SSHD_CONFIG_D, "99-fwpanel-port.conf")
         with open(conf, "w") as f:
             f.write(f"# Managed by fwpanel — SSH port\nPort {port}\n")
-        r = subprocess.run(["systemctl", "restart", "ssh"],
+        svc = ssh_service_name()
+        r = subprocess.run(["systemctl", "restart", svc],
                            capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
-            return False, f"重启 ssh 服务失败: {r.stderr.strip()[:200]}"
+            return False, f"重启 {svc} 服务失败: {r.stderr.strip()[:200]}"
         if get_sshd_port() != port:
             return False, "sshd 未监听新端口，请检查配置"
         return True, f"系统 SSH 端口已切换为 {port}"

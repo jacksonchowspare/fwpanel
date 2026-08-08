@@ -48,6 +48,13 @@ PANEL_PORT="17890"
 parse_args -p 19001
 [ "$PANEL_PORT" = "19001" ] && ok "参数覆盖环境变量" || bad "参数未生效"
 
+echo "== check_os 发行版识别（本机） =="
+DISTRO_ID="unknown"; PKG_MGR=""
+check_os
+[ -n "$DISTRO_ID" ] && [ -n "$PKG_MGR" ] \
+    && ok "识别发行版: $DISTRO_ID (包管理器: $PKG_MGR, python包: $PY_PKG)" \
+    || bad "发行版识别失败"
+
 echo "============================================"
 echo "结果: $PASS 通过, $FAIL 失败"
 rm -f "$TMPF" /tmp/install_funcs_fw.sh
