@@ -835,6 +835,8 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("GET", "/api/rules", token=token)
         self.assertTrue(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.77"
                             for r in d["rules"]), "应存在封禁规则")
+        # 封禁记录写入 bans（防爆破模块显示剩余时间）
+        self.assertIn("198.51.100.77", panel.load_bans(), "手动封禁应写入封禁记录")
         # 重复封禁拒绝
         code, d = self._req("POST", "/api/bruteforce/ban",
                             {"ip": "198.51.100.77"}, token=token)

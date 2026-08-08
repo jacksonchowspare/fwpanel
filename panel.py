@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.16.1"
+CURRENT_VERSION = "1.16.2"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1436,7 +1436,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "msg": f"登录用户名已修改为 {name}，下次登录请用新用户名"})
 
     def _api_bruteforce_ban(self):
-        """手动封禁 IP：{ip} → 添加拒绝规则"""
+        """手动封禁 IP：{ip} → 添加拒绝规则 + 写入封禁记录（使用配置的封禁时长）"""
         token = self._require_auth()
         if token is None:
             return
@@ -1450,6 +1450,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": f"{ip} 已在封禁列表"})
             return
         store.add({"type": "ip_deny", "ip": ip, "comment": "手动封禁"})
+        # 写入封禁记录（显示在防爆破模块，带剩余时间）
+        bans = load_bans()
+        bans[ip] = int(time.time()) + bf_cfg(self.server.config)["ban_seconds"]
+        save_bans(bans)
         ok, msg = self.server.nft.apply()
         if not ok:
             self._send(500, {"error": msg})

@@ -509,6 +509,11 @@ async function toggleBlockIp(id, on) {
 }
 
 /* ---------- SSH 防爆破 ---------- */
+function fmtRemain(sec) {
+  if (sec <= 0) return "已到期";
+  const h = Math.floor(sec / 3600), m = Math.ceil((sec % 3600) / 60);
+  return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分钟`;
+}
 async function loadBf() {
   try {
     const d = await api("GET", "/api/bruteforce");
@@ -519,7 +524,7 @@ async function loadBf() {
     const list = $("bf_list");
     if (!d.bans || !d.bans.length) { list.textContent = "当前无封禁 IP"; return; }
     list.innerHTML = d.bans.map(b =>
-      `<span style="color:#ff6b6b">🔒 ${b.ip}（剩余 ${Math.ceil(b.remaining / 60)} 分钟）</span> ` +
+      `<span style="color:#ff6b6b">🔒 ${b.ip}（剩余 ${fmtRemain(b.remaining)}）</span> ` +
       `<button class="btn mini danger" onclick="unban('${b.ip}')">解封</button><br>`).join("");
   } catch (e) { /* 静默 */ }
 }
