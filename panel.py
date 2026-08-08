@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.9.0"
+CURRENT_VERSION = "1.10.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -984,6 +984,77 @@ def issue_cert(domain, email):
     return True, "证书已签发"
 
 
+def pkg_mgr():
+    """检测系统包管理器：apt / pacman / dnf"""
+    try:
+        info = {}
+        with open("/etc/os-release") as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    info[k] = v.strip('"')
+        did = info.get("ID", "")
+        if did in ("debian", "ubuntu"):
+            return "apt"
+        if did in ("arch", "manjaro", "endeavouros"):
+            return "pacman"
+        if did in ("fedora", "centos", "rocky", "alma", "rhel"):
+            return "dnf"
+    except Exception:
+        pass
+    for m in ("apt-get", "pacman", "dnf"):
+        if shutil.which(m):
+            return m
+    return None
+
+
+def install_pkgs(pkgs):
+    """按发行版自动安装系统包（apt-get / pacman / dnf）"""
+    mgr = pkg_mgr()
+    if not mgr:
+        return False, "无法识别包管理器，请手动安装: " + " ".join(pkgs)
+    try:
+        if mgr == "apt":
+            r = subprocess.run(["apt-get", "update"], capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                return False, f"apt-get update 失败: {(r.stderr or r.stdout).strip()[:200]}"
+            r = subprocess.run(["apt-get", "install", "-y"] + pkgs,
+                               capture_output=True, text=True, timeout=600)
+        elif mgr == "pacman":
+            r = subprocess.run(["pacman", "-Sy", "--noconfirm"] + pkgs,
+                               capture_output=True, text=True, timeout=600)
+        else:  # dnf
+            r = subprocess.run(["dnf", "install", "-y"] + pkgs,
+                               capture_output=True, text=True, timeout=600)
+    except FileNotFoundError:
+        return False, f"{mgr} 不可用"
+    except subprocess.TimeoutExpired:
+        return False, "安装超时（10 分钟）"
+    if r.returncode != 0:
+        return False, f"安装失败: {(r.stderr or r.stdout).strip()[:300]}"
+    return True, f"已安装: {' '.join(pkgs)}"
+
+
+def ensure_nginx_default():
+    """写入 nginx 默认兜底配置（ACME 挑战路径 + 未匹配域名返回 444），保证 nginx 可直接启动"""
+    conf_dir = nginx_conf_dir()
+    if not conf_dir or DRY_RUN:
+        return
+    conf = os.path.join(conf_dir, "fwpanel-default.conf")
+    content = ("# FW-Panel 默认兜底\n"
+               "server {\n"
+               "    listen 80;\n"
+               "    server_name _;\n"
+               f"    location /.well-known/acme-challenge/ {{ root {ACME_WEBROOT}; }}\n"
+               "    location / { return 444; }\n"
+               "}\n")
+    try:
+        with open(conf, "w") as f:
+            f.write(content)
+    except OSError:
+        pass
+
+
 # ------------------------------- HTTP 服务 -------------------------------
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -1086,6 +1157,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_firewall()
         elif path == "/api/proxy":
             self._api_proxy_add()
+        elif path == "/api/proxy/install":
+            self._api_proxy_install()
         elif path.startswith("/api/proxy/"):
             self._api_proxy_action(path[len("/api/proxy/"):])
         elif path == "/api/username":
@@ -1389,6 +1462,40 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return
             self.server.config.set("firewall_enabled", False)
             self._send(200, {"ok": True, "msg": "防火墙已关闭（所有端口放行，规则配置已保留，重新开启恢复）"})
+
+    def _api_proxy_install(self):
+        """一键安装 nginx + certbot（按发行版 apt/pacman/dnf），并自动写入 nginx 配置"""
+        token = self._require_auth()
+        if token is None:
+            return
+        todo = []
+        if not nginx_available():
+            todo.append("nginx")
+        if not certbot_available():
+            todo.append("certbot")
+        if todo:
+            ok, msg = install_pkgs(todo)
+            if not ok:
+                self._send(500, {"error": msg})
+                return
+        # 启动 nginx 服务
+        if nginx_available() and not nginx_active():
+            try:
+                subprocess.run(["systemctl", "enable", "--now", "nginx"],
+                               capture_output=True, text=True, timeout=30)
+            except Exception:
+                pass
+        # 自动写入 nginx 配置：ACME webroot + 默认兜底 + 已有代理配置
+        try:
+            os.makedirs(ACME_WEBROOT, exist_ok=True)
+        except OSError:
+            pass
+        ensure_nginx_default()
+        ok2, msg2 = apply_proxies(ProxyStore())
+        if not ok2:
+            self._send(500, {"error": f"nginx 配置写入失败: {msg2}"})
+            return
+        self._send(200, {"ok": True, "msg": f"安装完成（{', '.join(todo) or '已是最新'}）；{msg2}"})
 
     def _api_proxy(self):
         """查询反向代理列表与 nginx/certbot 状态"""

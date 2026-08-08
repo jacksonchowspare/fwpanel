@@ -215,6 +215,10 @@ tr:hover td { background: #1d2733; }
     <div class="panel">
       <h2>🌐 反向代理（Nginx）</h2>
       <div id="proxy_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
+      <div class="form-row" id="px_install_row" style="display:none">
+        <button class="btn" onclick="installNginx()">⚙️ 一键安装 Nginx + certbot</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">自动按系统选择 apt / pacman / dnf，安装后自动写入 nginx 配置（需几分钟，期间页面等待属正常）</span>
+      </div>
       <div class="form-row" id="add_proxy_row">
         <input id="px_domain" placeholder="域名（如 app.example.com）" style="width:180px">
         <input id="px_host" placeholder="目标 IP/主机" style="width:120px">
@@ -321,9 +325,10 @@ async function loadProxy() {
   try {
     const d = await api("GET", "/api/proxy");
     const st = $("proxy_status");
-    st.innerHTML = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（apt install nginx / pacman -S nginx / dnf install nginx）")
+    st.innerHTML = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装")
       + (d.active ? " · 运行中" : " · 未运行")
-      + (d.certbot ? " · certbot 就绪" : " · ⚠ 未装 certbot，无法申请证书");
+      + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装");
+    $("px_install_row").style.display = (d.installed && d.certbot) ? "none" : "flex";
     const tbody = $("proxy_rows"); tbody.innerHTML = "";
     if (!d.proxies.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无代理，添加一个开始</td></tr>'; return; }
     for (const p of d.proxies) {
@@ -339,6 +344,17 @@ async function loadProxy() {
       tbody.appendChild(tr);
     }
   } catch (e) { /* 静默 */ }
+}
+async function installNginx() {
+  if (!confirm("确认一键安装 Nginx 和 certbot？\n\n将自动：检测系统包管理器（apt/pacman/dnf）→ 安装缺失组件 → 启动 nginx → 写入默认配置与已有代理配置。\n可能需要几分钟，期间请勿关闭页面。")) return;
+  const btn = event.target; const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "安装中...（几分钟）";
+  try {
+    const d = await api("POST", "/api/proxy/install", {});
+    toast(d.msg || "安装完成", "okk");
+    loadProxy();
+  } catch (e) { toast(e.message, "err"); }
+  btn.disabled = false; btn.textContent = old;
 }
 async function addProxy() {
   try {

@@ -717,6 +717,27 @@ class TestAPI(unittest.TestCase):
         if os.path.exists(panel.PROXIES_FILE):
             os.remove(panel.PROXIES_FILE)
 
+    def test_proxy_install_api(self):
+        """一键安装 API：缺组件时安装，装好后自动应用配置"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        real_nginx, real_cert, real_install = (panel.nginx_available,
+                                               panel.certbot_available, panel.install_pkgs)
+        panel.nginx_available = lambda: False
+        panel.certbot_available = lambda: False
+        panel.install_pkgs = lambda pkgs: (True, "已安装: " + " ".join(pkgs))
+        try:
+            code, d = self._req("POST", "/api/proxy/install", {}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertIn("nginx", d["msg"])
+            self.assertIn("certbot", d["msg"])
+        finally:
+            panel.nginx_available = real_nginx
+            panel.certbot_available = real_cert
+            panel.install_pkgs = real_install
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -1032,6 +1053,33 @@ class TestUpgrade(unittest.TestCase):
         store = panel.ProxyStore()
         ok, msg = panel.apply_proxies(store)
         self.assertTrue(ok, msg)
+
+    def test_pkg_mgr_detected(self):
+        """包管理器检测（本机应为 apt）"""
+        mgr = panel.pkg_mgr()
+        self.assertIn(mgr, ("apt", "pacman", "dnf"))
+
+    def test_install_pkgs_apt(self):
+        """install_pkgs：apt 系执行 update + install"""
+        import subprocess as sp
+        calls = []
+        real_run = panel.subprocess.run
+        real_mgr = panel.pkg_mgr
+
+        def fake_run(cmd, *a, **k):
+            calls.append(cmd)
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        panel.subprocess.run = fake_run
+        panel.pkg_mgr = lambda: "apt"
+        try:
+            ok, msg = panel.install_pkgs(["nginx", "certbot"])
+            self.assertTrue(ok, msg)
+            self.assertTrue(any(c[0] == "apt-get" and c[1] == "update" for c in calls))
+            self.assertTrue(any(c[0] == "apt-get" and "install" in c and "nginx" in c for c in calls))
+        finally:
+            panel.subprocess.run = real_run
+            panel.pkg_mgr = real_mgr
 
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""
