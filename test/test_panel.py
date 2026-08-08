@@ -854,9 +854,9 @@ class TestAPI(unittest.TestCase):
                              for r in d["rules"]), "解封后不应有封禁规则")
 
     def test_close_port_api(self):
-        """一键删除端口放行规则 API"""
+        """一键删除端口放行规则 API（按字母序在 full_flow 前，密码为初始值）"""
         code, d = self._req("POST", "/api/login",
-                            {"username": TEST_USER, "password": "NewPass123"})
+                            {"username": TEST_USER, "password": TEST_PASS})
         self.assertEqual(code, 200)
         token = d["token"]
         # 放行 tcp 5005 和 both 5006
