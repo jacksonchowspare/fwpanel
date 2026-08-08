@@ -242,6 +242,11 @@ tr:hover td { background: #1d2733; }
         <tbody id="rule_rows"></tbody>
       </table>
       <div id="no_rules" class="empty">暂无规则</div>
+      <div class="pager" id="rule_pager" style="display:none;margin-top:12px;align-items:center;justify-content:center;gap:10px">
+        <button class="btn mini ghost" onclick="rulePageGo(-1)" id="rule_prev">上一页</button>
+        <span style="color:var(--muted);font-size:12px" id="rule_pageinfo">1/1</span>
+        <button class="btn mini ghost" onclick="rulePageGo(1)" id="rule_next">下一页</button>
+      </div>
     </div>
   </div>
 </div>
@@ -564,6 +569,9 @@ async function setMode() {
 }
 
 /* ---------- 规则 ---------- */
+let rulePage = 1;
+const RULE_PAGE_SIZE = 5;
+function rulePageGo(d) { rulePage += d; renderRules(); }
 function typeTag(r) {
   const map = { port_allow: ["tag allow", "放行端口"], port_deny: ["tag deny", "拒绝端口"], ip_allow: ["tag allow", "放行 IP"], ip_deny: ["tag deny", "拒绝 IP"] };
   const [cls, txt] = map[r.type] || ["", r.type];
@@ -573,12 +581,18 @@ async function renderRules() {
   const { rules } = await api("GET", "/api/rules");
   const tbody = $("rule_rows"); tbody.innerHTML = "";
   $("no_rules").style.display = "none";   // SSH 保护常驻，列表不会为空
-  // 第一行：SSH 保护（跟随当前 SSH 端口，防锁死不可删除）
+  // 第一行：SSH 保护（跟随当前 SSH 端口，防锁死不可删除，不分页）
   const sshPort = (status && status.ssh_port) || 22;
   const sshTr = document.createElement("tr");
   sshTr.innerHTML = `<td><span class="tag allow">SSH 保护</span></td><td>tcp</td><td><span class="tag prot">tcp/${sshPort}</span></td><td>防锁死保护</td><td><span style="color:var(--muted)">保护</span></td>`;
   tbody.appendChild(sshTr);
-  rules.forEach((r, i) => {
+  // 用户规则分页：每页 5 条
+  const total = rules.length;
+  const pages = Math.max(1, Math.ceil(total / RULE_PAGE_SIZE));
+  if (rulePage > pages) rulePage = pages;
+  if (rulePage < 1) rulePage = 1;
+  const start = (rulePage - 1) * RULE_PAGE_SIZE;
+  rules.slice(start, start + RULE_PAGE_SIZE).forEach((r) => {
     const tr = document.createElement("tr");
     const target = r.port ? `<span class="tag prot">${r.proto}/${r.port}</span>` : `<span class="tag ip">${r.ip}</span>`;
     const del = r.protected
@@ -587,6 +601,16 @@ async function renderRules() {
     tr.innerHTML = `<td>${typeTag(r)}</td><td>${r.proto || "-"}</td><td>${target}</td><td>${r.comment || ""}</td><td>${del}</td>`;
     tbody.appendChild(tr);
   });
+  // 分页控件
+  const pager = $("rule_pager");
+  if (total > RULE_PAGE_SIZE) {
+    pager.style.display = "flex";
+    $("rule_pageinfo").textContent = `${rulePage}/${pages}（共 ${total} 条）`;
+    $("rule_prev").disabled = rulePage <= 1;
+    $("rule_next").disabled = rulePage >= pages;
+  } else {
+    pager.style.display = "none";
+  }
 }
 async function addRule() {
   const body = { type: $("r_type").value, comment: $("r_comment").value };
