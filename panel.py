@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.12.0"
+CURRENT_VERSION = "1.13.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -469,7 +469,8 @@ def get_latest_version():
 
 
 def download_panel_files(tag, tmpdir):
-    """按版本号下载 panel.py 和 index.html 到临时目录；返回 (py_path, html_path) 或 None"""
+    """按版本号下载 panel.py / index.html / favicon.ico 到临时目录；
+    返回 (py_path, html_path, ico_path 或 None) 或 None"""
     ok, py_path = False, os.path.join(tmpdir, "panel.py")
     for tpl in UPGRADE_SOURCES:
         if http_download(tpl.format(tag=tag, path="panel.py"), py_path):
@@ -484,7 +485,13 @@ def download_panel_files(tag, tmpdir):
             break
     if not ok:
         return None
-    return py_path, html_path
+    ico_path = os.path.join(tmpdir, "favicon.ico")
+    ok = False
+    for tpl in UPGRADE_SOURCES:
+        if http_download(tpl.format(tag=tag, path="static/favicon.ico"), ico_path):
+            ok = True
+            break
+    return py_path, html_path, (ico_path if ok else None)
 
 
 def perform_upgrade():
@@ -498,13 +505,15 @@ def perform_upgrade():
     tmpdir = tempfile.mkdtemp(prefix="fwpanel-upgrade-")
     backup_py = os.path.join(APP_DIR, "panel.py.bak")
     backup_html = os.path.join(APP_DIR, "static", "index.html.bak")
+    backup_ico = os.path.join(APP_DIR, "static", "favicon.ico.bak")
     panel_py = os.path.join(APP_DIR, "panel.py")
     panel_html = os.path.join(APP_DIR, "static", "index.html")
+    panel_ico = os.path.join(APP_DIR, "static", "favicon.ico")
     try:
         files = download_panel_files(latest, tmpdir)
         if not files:
             return False, "下载新版文件失败，请检查网络"
-        new_py, new_html = files
+        new_py, new_html, new_ico = files
         # 校验：新版 panel.py 必须语法通过，且版本号确实更新
         try:
             import py_compile
@@ -522,10 +531,14 @@ def perform_upgrade():
         # 备份当前文件
         shutil.copy2(panel_py, backup_py)
         shutil.copy2(panel_html, backup_html)
+        if os.path.exists(panel_ico):
+            shutil.copy2(panel_ico, backup_ico)
         # 替换
         os.chmod(new_py, 0o755)
         shutil.copy2(new_py, panel_py)
         shutil.copy2(new_html, panel_html)
+        if new_ico and os.path.exists(new_ico):
+            shutil.copy2(new_ico, panel_ico)
     except Exception as e:
         # 失败回滚
         try:
@@ -533,6 +546,8 @@ def perform_upgrade():
                 shutil.copy2(backup_py, panel_py)
             if os.path.exists(backup_html):
                 shutil.copy2(backup_html, panel_html)
+            if os.path.exists(backup_ico):
+                shutil.copy2(backup_ico, panel_ico)
         except Exception:
             pass
         return False, f"升级失败，已自动回滚: {e}"

@@ -886,7 +886,10 @@ class TestUpgrade(unittest.TestCase):
             f.write(py_content)
         with open(os.path.join(src, "index.html"), "w") as f:
             f.write("<html>new</html>")
-        return os.path.join(src, "panel.py"), os.path.join(src, "index.html")
+        ico = os.path.join(src, "favicon.ico")
+        with open(ico, "wb") as f:
+            f.write(b"\x00\x00\x01\x00fake-ico")
+        return os.path.join(src, "panel.py"), os.path.join(src, "index.html"), ico
 
     def test_upgrade_success(self):
         panel.get_latest_version = lambda: "9.9.9"
@@ -897,6 +900,8 @@ class TestUpgrade(unittest.TestCase):
             self.assertIn("9.9.9", f.read())
         self.assertTrue(os.path.exists(os.path.join(self.app_tmp, "panel.py.bak")),
                         "升级应生成备份文件")
+        self.assertTrue(os.path.exists(os.path.join(self.app_tmp, "static", "favicon.ico")),
+                        "升级应部署 favicon.ico")
 
     def test_version_compare(self):
         self.assertTrue(panel.version_gt("1.10.0", "1.9.0"))
