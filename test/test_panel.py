@@ -453,6 +453,24 @@ class TestAPI(unittest.TestCase):
         panel.RuleStore().rules = []
         panel.RuleStore().save()
 
+    def test_watch_ssh_switch_delayed_cleanup(self):
+        """连接确认后延迟 600 秒再清理旧端口规则"""
+        calls = {"sleep": [], "cleanup": 0}
+        real_sleep = panel.time.sleep
+        real_has = panel.has_established_on_port
+        real_cleanup = panel.cleanup_old_ssh_rules
+        panel.time.sleep = lambda s: calls["sleep"].append(s)
+        panel.has_established_on_port = lambda p: True   # 立即检测到连接
+        panel.cleanup_old_ssh_rules = lambda p: (calls.__setitem__("cleanup", calls["cleanup"] + 1) or True)
+        try:
+            panel.watch_ssh_switch(22, 3333, confirm_delay=600, wait_timeout=600)
+            self.assertEqual(calls["cleanup"], 1, "确认连接后应执行清理")
+            self.assertEqual(calls["sleep"][-1], 600, "清理前应延迟 600 秒")
+        finally:
+            panel.time.sleep = real_sleep
+            panel.has_established_on_port = real_has
+            panel.cleanup_old_ssh_rules = real_cleanup
+
     def test_has_established_on_port(self):
         """连接检测：ss 输出非空 = 有连接"""
         import subprocess as sp

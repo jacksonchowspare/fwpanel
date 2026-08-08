@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.5.5"
+CURRENT_VERSION = "1.5.6"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -540,18 +540,21 @@ def cleanup_old_ssh_rules(old_port):
     return False
 
 
-def watch_ssh_switch(old_port, new_port, timeout=600):
-    """后台监控：新 SSH 端口出现连接后，自动删除旧端口放行规则（600 秒内自动收尾）"""
-    deadline = time.time() + timeout
+def watch_ssh_switch(old_port, new_port, confirm_delay=600, wait_timeout=600):
+    """后台监控：检测到新 SSH 端口连接后，延迟 confirm_delay 秒再自动删除旧端口放行规则。
+    confirm_delay=600：确认新端口可连接后留 10 分钟宽限期，然后自动清理旧端口规则"""
+    deadline = time.time() + wait_timeout
     while time.time() < deadline:
         if has_established_on_port(new_port):
+            log(f"检测到新 SSH 端口 {new_port} 已有连接，将在 {confirm_delay} 秒后自动删除旧端口 {old_port} 放行规则")
+            time.sleep(confirm_delay)
             if cleanup_old_ssh_rules(old_port):
-                log(f"检测到新 SSH 端口 {new_port} 已有连接，已自动删除旧端口 {old_port} 放行规则")
+                log(f"已自动删除旧端口 {old_port} 放行规则")
             else:
-                log(f"检测到新 SSH 端口 {new_port} 已有连接（无旧端口规则需清理）")
+                log(f"无旧端口规则需清理")
             return
         time.sleep(10)
-    log(f"等待新 SSH 端口 {new_port} 连接超时（{timeout}s），旧端口 {old_port} 规则保留，可手动删除")
+    log(f"等待新 SSH 端口 {new_port} 连接超时（{wait_timeout}s），旧端口 {old_port} 规则保留，可手动删除")
 
 
 def apply_sshd_port(port):
