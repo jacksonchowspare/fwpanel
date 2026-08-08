@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.13.2"
+readonly SCRIPT_VERSION="1.13.3"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"

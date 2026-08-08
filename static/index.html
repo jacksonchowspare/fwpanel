@@ -542,16 +542,16 @@ async function doUpgrade() {
 }
 
 /* ---------- 服务开关 ---------- */
-const SVCS = [["ssh", null], ["http", 80], ["https", 443], ["dns", 53], ["mail", 25], ["imap", 143], ["smtps", 465]];
+const SVCS = [["ssh", null, "tcp"], ["http", 80, "tcp"], ["https", 443, "tcp"], ["dns", 53, "udp"], ["mail", 25, "tcp"], ["imap", 143, "tcp"], ["smtps", 465, "tcp"]];
 async function renderSvc() {
   const rules = (await api("GET", "/api/rules")).rules;
   const sshPort = (status && status.ssh_port) || 22;
   const list = $("svc_list"); list.innerHTML = "";
-  for (const [name, port] of SVCS) {
+  for (const [name, port, proto] of SVCS) {
     const p = (name === "ssh") ? sshPort : port;   // SSH 端口跟随当前保护端口
-    const on = rules.some(r => r.type === "port_allow" && r.port == p);
+    const on = rules.some(r => r.type === "port_allow" && r.port == p && (r.proto === proto || r.proto === "both"));
     const row = document.createElement("div"); row.className = "svc";
-    row.innerHTML = `<span><span class="name">${name.toUpperCase()}</span><span class="desc">${p}/tcp</span></span>
+    row.innerHTML = `<span><span class="name">${name.toUpperCase()}</span><span class="desc">${p}/${proto}</span></span>
       <label class="switch"><input type="checkbox" ${on ? "checked" : ""} onchange="toggleSvc('${name}', this.checked)"><span class="slider"></span></label>`;
     list.appendChild(row);
   }
