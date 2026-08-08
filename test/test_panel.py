@@ -531,6 +531,44 @@ class TestAPI(unittest.TestCase):
             if r.get("ip") == "203.0.113.0/24":
                 self._req("DELETE", f"/api/rules/{r['id']}", token=token)
 
+    def test_ip_range_validation(self):
+        """IP 范围格式校验：start-end 同版本且正序"""
+        for ok in ("1.2.3.1-1.2.3.50", "10.0.0.1-10.0.0.255",
+                   "2001:db8::1-2001:db8::ff"):
+            self.assertTrue(panel.is_valid_ip_or_net(ok), f"{ok} 应合法")
+        for bad in ("1.2.3.50-1.2.3.1",          # 反序
+                    "1.2.3.1-2001:db8::1",       # 跨版本
+                    "1.2.3.1-1.2.3.999",         # 非法端点
+                    "1.2.3.1-1.2.3.2-1.2.3.3",   # 多个 -
+                    "1.2.3.1-"):                 # 缺终点
+            self.assertFalse(panel.is_valid_ip_or_net(bad), f"{bad} 应非法")
+
+    def test_ip_range_render(self):
+        """IP 范围规则渲染（IPv4+IPv6）"""
+        self.store.rules = [
+            {"id": "1", "type": "ip_deny", "ip": "1.2.3.1-1.2.3.50", "comment": "范围封禁"},
+        ]
+        text = self.store.render(self.cfg)
+        self.assertIn("ip saddr 1.2.3.1-1.2.3.50 drop", text)
+
+    def test_ip_range_api(self):
+        """API 添加 IP 范围规则"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/rules",
+                            {"type": "ip_deny", "ip": "198.51.100.1-198.51.100.50",
+                             "comment": "范围封禁"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r.get("ip") == "198.51.100.1-198.51.100.50" for r in d["rules"]))
+        # 清理
+        code, d = self._req("GET", "/api/rules", token=token)
+        for r in d["rules"]:
+            if r.get("ip") == "198.51.100.1-198.51.100.50":
+                self._req("DELETE", f"/api/rules/{r['id']}", token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

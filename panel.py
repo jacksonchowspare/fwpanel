@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.6.1"
+CURRENT_VERSION = "1.6.2"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -121,7 +121,20 @@ def is_ipv6(ip):
 
 
 def is_valid_ip_or_net(s):
-    """校验单个 IP 或 CIDR 网段（IPv4/IPv6），如 1.2.3.4、1.2.3.0/24、2001:db8::/32"""
+    """校验 IP 目标：单个 IP / CIDR 网段 / 范围，如 1.2.3.4、1.2.3.0/24、
+    1.2.3.1-1.2.3.50、2001:db8::/32（IPv4/IPv6 均可）"""
+    s = str(s).strip()
+    # 范围格式：start-end（两端同版本且 start <= end）
+    if "-" in s:
+        if s.count("-") != 1:
+            return False
+        a, b = (x.strip() for x in s.split("-", 1))
+        try:
+            ia, ib = ipaddress.ip_address(a), ipaddress.ip_address(b)
+        except ValueError:
+            return False
+        return ia.version == ib.version and int(ia) <= int(ib)
+    # 单个 IP 或 CIDR
     try:
         ipaddress.ip_network(s, strict=False)
         return True
@@ -932,7 +945,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "IP 不能为空"})
                 return
             if not is_valid_ip_or_net(ip):
-                self._send(400, {"error": "IP 或 IP 段格式无效（支持 1.2.3.4 / 1.2.3.0/24 / IPv6）"})
+                self._send(400, {"error": "IP 格式无效（支持 1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50 / IPv6）"})
                 return
             rule["ip"] = ip
         self.server.store.add(rule)
