@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.2.0"
+CURRENT_VERSION = "1.3.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -79,6 +79,11 @@ SERVICES = {
     "imap":  ("tcp", 143),
     "smtps": ("tcp", 465),
 }
+
+VALID_PROTOS = ("tcp", "udp", "both")
+
+# SSH 端口切换时的临时放行规则注释（确认新端口可用后手动删除）
+SSH_OLD_PORT_COMMENT = "旧SSH端口-切换保护"
 
 # ------------------------------- 基础工具 -------------------------------
 
@@ -203,31 +208,31 @@ class RuleStore:
         lines.append(f"        tcp dport {ssh_port} accept   # SSH 保护(不可删除)")
         # 用户规则
         for r in self.rules:
-            lines.append(self._render_one(r, config))
+            for line in self._render_one(r):
+                lines.append(line)
         lines.append("    }")
         lines.append("}")
         return "\n".join(lines) + "\n"
 
     @staticmethod
-    def _render_one(r, config):
+    def _render_one(r):
+        """单条规则 → nft 规则行列表（proto=both 生成 TCP+UDP 两行）"""
         t = r.get("type")
         comment = r.get("comment", "")
         tag = f"  # {comment}" if comment else ""
-        if t == "port_allow":
+        if t in ("port_allow", "port_deny"):
+            action = "accept" if t == "port_allow" else "drop"
+            if r.get("proto") == "both":
+                return [f"        tcp dport {r['port']} {action}{tag}",
+                        f"        udp dport {r['port']} {action}{tag}"]
             proto = r.get("proto", "tcp")
-            return f"        {proto} dport {r['port']} accept{tag}"
-        if t == "port_deny":
-            proto = r.get("proto", "tcp")
-            return f"        {proto} dport {r['port']} drop{tag}"
-        if t == "ip_allow":
+            return [f"        {proto} dport {r['port']} {action}{tag}"]
+        if t in ("ip_allow", "ip_deny"):
+            action = "accept" if t == "ip_allow" else "drop"
             ip = r["ip"]
             key = "ip6 saddr" if is_ipv6(ip) else "ip saddr"
-            return f"        {key} {ip} accept{tag}"
-        if t == "ip_deny":
-            ip = r["ip"]
-            key = "ip6 saddr" if is_ipv6(ip) else "ip saddr"
-            return f"        {key} {ip} drop{tag}"
-        return ""
+            return [f"        {key} {ip} {action}{tag}"]
+        return []
 
 
 # ------------------------------- nftables 执行 -------------------------------
@@ -452,6 +457,43 @@ def perform_upgrade():
     return True, f"已升级到 v{latest}，服务重启中，请稍候重新登录"
 
 
+# ------------------------------- SSH 端口管理 -------------------------------
+
+SSHD_CONFIG_D = os.environ.get("FW_SSHD_DIR", "/etc/ssh/sshd_config.d")
+
+
+def get_sshd_port():
+    """检测系统 SSH 服务实际监听端口（sshd -T 优先，root 下可用）"""
+    try:
+        r = subprocess.run(["sshd", "-T"], capture_output=True, text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            if line.startswith("port "):
+                return int(line.split()[1])
+    except Exception:
+        pass
+    return SSH_PORT_DEFAULT
+
+
+def apply_sshd_port(port):
+    """修改系统 SSH 服务端口：写入 sshd_config.d 并重启 ssh。返回 (ok, msg)"""
+    if not (1 <= port <= 65535):
+        return False, "端口范围 1-65535"
+    try:
+        os.makedirs(SSHD_CONFIG_D, exist_ok=True)
+        conf = os.path.join(SSHD_CONFIG_D, "99-fwpanel-port.conf")
+        with open(conf, "w") as f:
+            f.write(f"# Managed by fwpanel — SSH port\nPort {port}\n")
+        r = subprocess.run(["systemctl", "restart", "ssh"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return False, f"重启 ssh 服务失败: {r.stderr.strip()[:200]}"
+        if get_sshd_port() != port:
+            return False, "sshd 未监听新端口，请检查配置"
+        return True, f"系统 SSH 端口已切换为 {port}"
+    except Exception as e:
+        return False, f"修改失败: {e}"
+
+
 # ------------------------------- HTTP 服务 -------------------------------
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -505,6 +547,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_status()
         elif path == "/api/upgrade/check":
             self._api_upgrade_check()
+        elif path == "/api/ssh":
+            self._api_ssh()
         elif path == "/api/rules":
             self._api_list_rules()
         elif path == "/api/logout":
@@ -532,6 +576,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_password()
         elif path == "/api/upgrade":
             self._api_upgrade()
+        elif path == "/api/ssh/apply":
+            self._api_ssh_apply()
+        elif path == "/api/ssh":
+            self._api_ssh_set()
         else:
             self._send(404, {"error": "Not Found"})
 
@@ -606,6 +654,77 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         self._send(200, {"ok": True, "msg": msg})
 
+    def _api_ssh(self):
+        """查询 SSH 端口状态：面板保护端口 vs 系统实际端口"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, {
+            "protected_port": int(self.server.config.get("ssh_port", SSH_PORT_DEFAULT)),
+            "sshd_port": get_sshd_port(),
+        })
+
+    def _api_ssh_set(self):
+        """仅更新防火墙 SSH 保护端口（不动系统 sshd）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        try:
+            port = int(data.get("ssh_port", 0))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "端口必须是数字"})
+            return
+        if not (1 <= port <= 65535):
+            self._send(400, {"error": "端口范围 1-65535"})
+            return
+        self.server.config.set("ssh_port", port)
+        ok, msg = self.server.nft.apply()
+        if not ok:
+            self._send(500, {"error": f"规则应用失败: {msg}"})
+            return
+        self._send(200, {"ok": True, "msg": f"SSH 保护端口已更新为 {port}（防火墙规则已生效）"})
+
+    def _api_ssh_apply(self):
+        """同步修改系统 SSH 端口（防锁死流程：旧端口临时放行 → 更新保护 → 改 sshd → 重启）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        try:
+            port = int(data.get("ssh_port", 0))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "端口必须是数字"})
+            return
+        if not (1 <= port <= 65535):
+            self._send(400, {"error": "端口范围 1-65535"})
+            return
+        old = int(self.server.config.get("ssh_port", SSH_PORT_DEFAULT))
+        store = self.server.store
+        # 1) 端口变化时先临时放行旧端口（切换期间旧连接不断）
+        if port != old:
+            exists = any(r.get("type") == "port_allow" and r.get("port") == old
+                         and r.get("comment") == SSH_OLD_PORT_COMMENT for r in store.rules)
+            if not exists:
+                store.add({"type": "port_allow", "proto": "tcp", "port": old,
+                           "comment": SSH_OLD_PORT_COMMENT})
+        # 2) 更新保护端口并应用规则
+        self.server.config.set("ssh_port", port)
+        ok, msg = self.server.nft.apply()
+        if not ok:
+            self._send(500, {"error": f"防火墙规则应用失败: {msg}"})
+            return
+        # 3) 修改系统 sshd 端口
+        sok, smsg = apply_sshd_port(port)
+        if not sok:
+            self._send(500, {"error": smsg + "（防火墙已更新，请用 ssh -p 原端口 登录排查）"})
+            return
+        hint = ""
+        if port != old:
+            hint = (f"。旧端口 {old} 已临时放行（规则备注「{SSH_OLD_PORT_COMMENT}」），"
+                    f"确认新端口 {port} 可登录后，请在规则列表删除该临时规则")
+        self._send(200, {"ok": True, "msg": smsg + hint})
+
     def _api_list_rules(self):
         token = self._require_auth()
         if token is None:
@@ -624,8 +743,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         rule = {"type": rtype, "comment": str(data.get("comment", ""))[:60]}
         if rtype.startswith("port"):
             proto = data.get("proto", "tcp")
-            if proto not in ("tcp", "udp"):
-                self._send(400, {"error": "proto 必须是 tcp 或 udp"})
+            if proto not in VALID_PROTOS:
+                self._send(400, {"error": f"proto 必须是 {VALID_PROTOS} 之一"})
                 return
             try:
                 port = int(data.get("port", 0))
@@ -706,8 +825,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "端口必须是数字"})
             return
         proto = data.get("proto", "tcp")
-        if proto not in ("tcp", "udp"):
-            self._send(400, {"error": "proto 必须是 tcp 或 udp"})
+        if proto not in VALID_PROTOS:
+            self._send(400, {"error": f"proto 必须是 {VALID_PROTOS} 之一"})
             return
         if not (1 <= port <= 65535):
             self._send(400, {"error": "端口范围 1-65535"})
@@ -809,11 +928,11 @@ def cmd_apply(config):
 
 
 def cmd_open_port(port, proto="tcp"):
-    """CLI 一键开放端口给公网：fwpanel open-port 8080 [tcp|udp]"""
+    """CLI 一键开放端口给公网：fwpanel open-port 8080 [tcp|udp|both]"""
     config = Config()
     store = RuleStore()
-    if not (1 <= port <= 65535) or proto not in ("tcp", "udp"):
-        print("用法: fwpanel open-port <端口(1-65535)> [tcp|udp]", file=sys.stderr)
+    if not (1 <= port <= 65535) or proto not in VALID_PROTOS:
+        print("用法: fwpanel open-port <端口(1-65535)> [tcp|udp|both]  （默认 tcp）", file=sys.stderr)
         sys.exit(1)
     for r in store.rules:
         if r.get("type") == "port_allow" and r.get("port") == port and r.get("proto") == proto:

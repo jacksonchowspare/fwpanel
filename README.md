@@ -9,6 +9,8 @@
 - ✅ **nftables 原生管理**：直接生成并原子应用 nft 规则（Debian 13 默认防火墙后端）
 - ✅ **防锁死保护**：SSH(22) 放行规则永远存在且不可删除，改端口只需改配置
 - ✅ **一键开放端口**：面板 ⚡ 快捷区 / CLI `fwpanel open-port 8080` / 安装参数 `--open-port` 三入口
+- ✅ **TCP+UDP 同时开放**：一键开放可选 TCP / UDP / TCP+UDP（both）
+- ✅ **SSH 端口管理**：面板内修改保护端口；可一键同步修改系统 SSH 端口（防锁死：切换时旧端口临时放行）
 - ✅ 两种模式：宽松（默认放行，按需拒绝）/ 严格（默认拒绝，白名单放行）
 - ✅ 端口放行/拒绝、IP 白名单/黑名单（支持 IPv6）
 - ✅ 服务模板快捷开关：SSH/HTTP/HTTPS/DNS/Mail/IMAP/SMTPS
@@ -73,15 +75,26 @@ sudo bash install.sh --bind 0.0.0.0
 ## 一键开放端口（三种方式）
 
 ```bash
-# 1. 面板：登录后 ⚡「一键开放端口」输入端口号即可，立即生效
+# 1. 面板：登录后 ⚡「一键开放端口」输入端口号即可，协议可选 TCP / UDP / TCP+UDP
 # 2. CLI（SSH 到服务器直接执行，无需登录面板）：
-sudo python3 /usr/local/lib/fwpanel/panel.py open-port 8080        # TCP 8080
-sudo python3 /usr/local/lib/fwpanel/panel.py open-port 53/udp      # UDP 53
+sudo python3 /usr/local/lib/fwpanel/panel.py open-port 8080          # TCP 8080
+sudo python3 /usr/local/lib/fwpanel/panel.py open-port 53/udp        # UDP 53
+sudo python3 /usr/local/lib/fwpanel/panel.py open-port 5000/both     # TCP+UDP 同时
 # 3. 安装时顺带开放：
 sudo bash install.sh --open-port 80,443
 ```
 
 重复开放同一端口不会报错（幂等）。
+
+## SSH 端口管理
+
+面板「模式与保护」区块：
+
+- **仅更新防火墙保护**：修改 SSH 保护端口（防火墙规则跟随，SSH 服务本身不动）
+- **同步修改系统 SSH 端口**：一键切换 sshd 端口（写 sshd_config.d + 重启 ssh）
+  - 防锁死流程：旧端口先临时放行 → 防火墙保护新端口 → 修改 sshd → 重启
+  - 切换后立即用新端口测试登录，确认后删除规则列表里的「旧SSH端口-切换保护」临时规则
+  - ⚠ 修改系统 SSH 端口会断开当前连接，请确保你能通过其他途径访问服务器（云控制台等）
 
 ## 面板功能
 

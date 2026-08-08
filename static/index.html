@@ -121,7 +121,16 @@ tr:hover td { background: #1d2733; }
           <option value="strict">严格模式（默认拒绝，白名单放行）</option>
         </select>
         <button class="btn" onclick="setMode()">应用模式</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">SSH(<span id="ssh_port"></span>) 始终放行，防锁死</span>
+      </div>
+      <div class="form-row">
+        <span style="align-self:center">SSH 保护端口</span>
+        <input id="ssh_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
+        <button class="btn ghost" onclick="setSshPort()">仅更新防火墙保护</button>
+        <button class="btn danger" onclick="applySshPort()">同步修改系统 SSH 端口</button>
+        <span id="sshd_hint" style="color:var(--muted);font-size:12px;align-self:center"></span>
+      </div>
+      <div style="color:var(--muted);font-size:12px">
+        保护规则永远存在防锁死；切换端口时旧端口会临时放行，确认新端口可登录后删除临时规则
       </div>
     </div>
 
@@ -134,7 +143,7 @@ tr:hover td { background: #1d2733; }
       <h2>⚡ 一键开放端口（公网）</h2>
       <div class="form-row">
         <input id="qp_port" placeholder="端口 (1-65535)" style="width:130px" inputmode="numeric">
-        <select id="qp_proto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+        <select id="qp_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
         <button class="btn" onclick="quickOpen()">一键开放</button>
         <span style="color:var(--muted);font-size:12px;align-self:center">立即添加放行规则并生效，重复开放不会报错</span>
       </div>
@@ -149,7 +158,7 @@ tr:hover td { background: #1d2733; }
           <option value="ip_allow">放行 IP</option>
           <option value="ip_deny">拒绝 IP</option>
         </select>
-        <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+        <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
         <input id="r_port" placeholder="端口 (1-65535)" style="width:120px">
         <input id="r_ip" placeholder="IP 地址 (支持 IPv6)" style="width:170px">
         <input id="r_comment" placeholder="备注（可选）" style="width:150px">
@@ -229,10 +238,39 @@ async function refreshAll() {
     $("st_rules").textContent = status.rule_count;
     $("st_ssh").textContent = status.ssh_port;
     $("st_ver").textContent = "v" + status.version;
-    $("ssh_port").textContent = status.ssh_port;
     $("mode_sel").value = status.mode;
-    renderSvc(); renderRules();
+    renderSvc(); renderRules(); loadSsh();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+/* ---------- SSH 端口管理 ---------- */
+async function loadSsh() {
+  try {
+    const d = await api("GET", "/api/ssh");
+    $("ssh_port_input").value = d.protected_port;
+    $("sshd_hint").textContent = d.protected_port === d.sshd_port
+      ? `系统 SSH 服务端口 ${d.sshd_port}，与保护一致 ✓`
+      : `⚠ 系统 SSH 服务实际监听 ${d.sshd_port}，与保护端口 ${d.protected_port} 不一致`;
+  } catch (e) { /* 静默 */ }
+}
+async function setSshPort() {
+  const port = $("ssh_port_input").value.trim();
+  if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
+  try {
+    const d = await api("POST", "/api/ssh", { ssh_port: port });
+    toast(d.msg || "SSH 保护端口已更新", "okk");
+    refreshAll();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function applySshPort() {
+  const port = $("ssh_port_input").value.trim();
+  if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
+  if (!confirm(`确认将系统 SSH 服务端口修改为 ${port}？\n\n执行顺序：旧端口临时放行 → 防火墙保护新端口 → 修改 sshd 配置 → 重启 SSH。\n切换后请立即用新端口连接测试，确认可登录后删除「旧SSH端口-切换保护」临时规则。`)) return;
+  try {
+    const d = await api("POST", "/api/ssh/apply", { ssh_port: port });
+    toast(d.msg || "SSH 端口已切换", "okk");
+    refreshAll();
+  } catch (e) { toast("切换失败: " + e.message, "err"); }
 }
 
 /* ---------- 系统更新 ---------- */

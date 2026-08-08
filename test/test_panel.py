@@ -103,6 +103,18 @@ class TestRules(unittest.TestCase):
         text = self.store.render(self.cfg)
         self.assertIn("ip6 saddr 2001:db8::1 accept", text)
 
+    def test_render_both(self):
+        self.store.rules = [
+            {"id": "1", "type": "port_allow", "proto": "both", "port": 8080, "comment": "双协议"},
+            {"id": "2", "type": "port_deny", "proto": "both", "port": 4444, "comment": ""},
+        ]
+        text = self.store.render(self.cfg)
+        self.assertIn("tcp dport 8080 accept", text)
+        self.assertIn("udp dport 8080 accept", text)
+        self.assertIn("# 双协议", text)
+        self.assertIn("tcp dport 4444 drop", text)
+        self.assertIn("udp dport 4444 drop", text)
+
     def test_protected_rule_not_deletable(self):
         self.store.rules = [{"id": "x1", "type": "port_allow", "proto": "tcp",
                              "port": 22, "comment": "SSH 保护(不可删除)", "protected": True}]
@@ -176,6 +188,79 @@ class TestAPI(unittest.TestCase):
         # 非法端口
         code, d = self._req("POST", "/api/open-port", {"port": 99999}, token=token)
         self.assertEqual(code, 400)
+
+    def test_open_port_both(self):
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # TCP+UDP 同时开放
+        code, d = self._req("POST", "/api/open-port", {"port": 9100, "proto": "both"}, token=token)
+        self.assertEqual(code, 200, d)
+        # 幂等
+        code, d = self._req("POST", "/api/open-port", {"port": 9100, "proto": "both"}, token=token)
+        self.assertEqual(code, 200)
+        self.assertIn("已在放行列表", d["msg"])
+        # 渲染应生成 tcp+udp 两行
+        text = self.store.render(self.cfg)
+        self.assertIn("tcp dport 9100 accept", text)
+        self.assertIn("udp dport 9100 accept", text)
+        # 非法协议
+        code, d = self._req("POST", "/api/open-port", {"port": 9200, "proto": "icmp"}, token=token)
+        self.assertEqual(code, 400)
+
+    def test_ssh_api(self):
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 查询状态
+        code, d = self._req("GET", "/api/ssh", token=token)
+        self.assertEqual(code, 200)
+        self.assertEqual(d["protected_port"], 22)
+        # 仅更新保护端口
+        code, d = self._req("POST", "/api/ssh", {"ssh_port": 2222}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/ssh", token=token)
+        self.assertEqual(d["protected_port"], 2222)
+        # 规则渲染应保护新端口
+        text = self.store.render(self.cfg)
+        self.assertIn("tcp dport 2222 accept   # SSH 保护", text)
+        # 恢复
+        self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
+
+    def test_ssh_apply(self):
+        """同步修改系统 SSH 端口：验证防锁死流程（旧端口临时放行 + 保护更新）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        real = panel.apply_sshd_port
+        panel.apply_sshd_port = lambda port: (True, f"系统 SSH 端口已切换为 {port}")
+        try:
+            code, d = self._req("POST", "/api/ssh/apply", {"ssh_port": 3333}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertIn("临时放行", d["msg"])
+            # 保护端口已更新
+            code, d = self._req("GET", "/api/ssh", token=token)
+            self.assertEqual(d["protected_port"], 3333)
+            # 旧端口临时放行规则存在
+            code, d = self._req("GET", "/api/rules", token=token)
+            self.assertTrue(any(r.get("comment") == panel.SSH_OLD_PORT_COMMENT
+                                and r.get("port") == 22 for r in d["rules"]),
+                            "应存在旧端口临时放行规则")
+            # 渲染：新保护端口 + 旧端口临时放行都在
+            text = self.store.render(self.cfg)
+            self.assertIn("tcp dport 3333 accept   # SSH 保护", text)
+            self.assertIn(f"tcp dport 22 accept  # {panel.SSH_OLD_PORT_COMMENT}", text)
+        finally:
+            panel.apply_sshd_port = real
+            # 清理测试痕迹
+            self._req("POST", "/api/ssh", {"ssh_port": 22}, token=token)
+            code, d = self._req("GET", "/api/rules", token=token)
+            for r in d["rules"]:
+                if r.get("comment") == panel.SSH_OLD_PORT_COMMENT:
+                    self._req("DELETE", f"/api/rules/{r['id']}", token=token)
 
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
