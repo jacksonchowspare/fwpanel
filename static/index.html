@@ -273,16 +273,24 @@ tr:hover td { background: #1d2733; }
 
 <!-- 证书路径弹窗 -->
 <div id="path_modal" class="modal-mask hidden">
-  <div class="modal">
-    <h3>SSL 证书路径</h3>
-    <div class="form-row" style="flex-direction:column;align-items:flex-start;gap:4px">
-      <span style="color:var(--muted);font-size:12px">公钥（fullchain.pem）</span>
-      <code id="pm_cert" style="word-break:break-all;font-size:12px"></code>
-      <span style="color:var(--muted);font-size:12px;margin-top:8px">私钥（privkey.pem）</span>
-      <code id="pm_key" style="word-break:break-all;font-size:12px"></code>
+  <div class="modal" style="width:440px">
+    <h3>🔒 SSL 证书路径</h3>
+    <div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="color:var(--muted);font-size:12px">公钥（fullchain.pem）</span>
+        <button class="btn mini ghost" onclick="copyPath('pm_cert')">复制公钥路径</button>
+      </div>
+      <code id="pm_cert" style="display:block;background:#0d1218;border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;font-size:12px"></code>
+    </div>
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="color:var(--muted);font-size:12px">私钥（privkey.pem）</span>
+        <button class="btn mini ghost" onclick="copyPath('pm_key')">复制私钥路径</button>
+      </div>
+      <code id="pm_key" style="display:block;background:#0d1218;border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;font-size:12px"></code>
     </div>
     <div class="btnrow">
-      <button class="btn ghost" onclick="closePathModal()">关闭</button>
+      <button class="btn" onclick="closePathModal()">关闭</button>
     </div>
   </div>
 </div>
@@ -430,6 +438,24 @@ async function showCertPaths(id) {
   } catch (e) { toast(e.message, "err"); }
 }
 function closePathModal() { $("path_modal").classList.add("hidden"); }
+function copyPath(id) {
+  const text = $(id).textContent;
+  if (!text) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => toast("已复制到剪贴板", "okk"),
+      () => legacyCopy(text)
+    );
+  } else legacyCopy(text);
+}
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); toast("已复制到剪贴板", "okk"); }
+  catch (e) { toast("复制失败，请手动选中复制", "err"); }
+  document.body.removeChild(ta);
+}
 async function toggleBlockIp(id, on) {
   try {
     const d = await api("POST", "/api/proxy/" + id, { action: "blockip", enabled: on });
