@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="fwpanel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.1.1"
+readonly SCRIPT_VERSION="1.1.2"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -306,7 +306,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 $APP_DIR/panel.py serve --port $PANEL_PORT --bind $PANEL_BIND
+# 端口/监听地址以 /etc/fwpanel/config.json 为准（面板内/改配置后重启即生效）
+ExecStart=/usr/bin/python3 $APP_DIR/panel.py serve
 Restart=always
 RestartSec=3
 

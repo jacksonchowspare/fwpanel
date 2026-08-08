@@ -443,7 +443,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "ssh_port": int(cfg.get("ssh_port", SSH_PORT_DEFAULT)),
             "loaded": nft.status(),
             "rule_count": len(self.server.store.rules),
-            "version": "1.1.0",
+            "version": "1.1.2",
         })
 
     def _api_list_rules(self):
@@ -678,8 +678,10 @@ def main():
                         choices=["serve", "reset-password", "apply", "open-port"])
     parser.add_argument("arg1", nargs="?", help="open-port 的端口（如 8080 或 8080/udp）")
     parser.add_argument("arg2", nargs="?", help="open-port 的协议（tcp/udp，默认 tcp）")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("FW_PORT", DEFAULT_PORT)))
-    parser.add_argument("--bind", default=os.environ.get("FW_BIND", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=None,
+                        help="面板端口（默认读 /etc/fwpanel/config.json，安装参数 --port 写入）")
+    parser.add_argument("--bind", default=None,
+                        help="监听地址（默认读 /etc/fwpanel/config.json，安装参数 --bind 写入）")
     args = parser.parse_args()
 
     config = Config()
@@ -701,18 +703,20 @@ def main():
         cmd_open_port(int(arg), proto)
         return
 
-    # serve
+    # serve：端口/监听地址以 config.json 为权威（安装时写入），CLI 显式参数可覆盖
+    bind = args.bind or config.get("bind", "127.0.0.1")
+    port = args.port or int(config.get("port", DEFAULT_PORT))
     store = RuleStore()
     nft = NFTManager(store, config)
     auth = Auth(config)
-    server = PanelServer((args.bind, args.port), PanelHandler, config, store, nft, auth)
+    server = PanelServer((bind, port), PanelHandler, config, store, nft, auth)
 
     # 启动时应用一次规则（保证面板规则生效）
     ok, msg = nft.apply()
     if not ok:
         log(f"警告：启动时规则应用失败: {msg}")
 
-    log(f"面板已启动: http://{args.bind}:{args.port}  (dry-run={DRY_RUN})")
+    log(f"面板已启动: http://{bind}:{port}  (dry-run={DRY_RUN})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
