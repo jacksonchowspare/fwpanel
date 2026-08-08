@@ -484,6 +484,35 @@ class TestUpgrade(unittest.TestCase):
         self.assertFalse(panel.version_gt("1.2.0", "1.2.0"))
         self.assertFalse(panel.version_gt("1.1.3", "1.2.0"))
 
+    def test_apply_is_idempotent(self):
+        """apply 必须先删旧表再加载（防 nft -f 追加累积），回归测试"""
+        import subprocess as sp
+        calls = []
+        real_run = panel.subprocess.run
+        real_dry = panel.DRY_RUN
+
+        def fake_run(cmd, *a, **k):
+            calls.append(cmd)
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        panel.subprocess.run = fake_run
+        panel.DRY_RUN = False
+        try:
+            store = panel.RuleStore()
+            store.rules = [{"id": "1", "type": "port_allow", "proto": "tcp",
+                            "port": 8080, "comment": "t"}]
+            nft = panel.NFTManager(store, make_cfg())
+            ok, msg = nft.apply()
+            self.assertTrue(ok, msg)
+            # 调用序列中 delete 必须在 nft -f 之前
+            delete_idx = next(i for i, c in enumerate(calls)
+                              if c[:5] == ["nft", "delete", "table", "inet", "fwpanel"])
+            load_idx = next(i for i, c in enumerate(calls) if c[:3] == ["nft", "-f"])
+            self.assertLess(delete_idx, load_idx, "必须先删除旧表再加载新规则")
+        finally:
+            panel.subprocess.run = real_run
+            panel.DRY_RUN = real_dry
+
     def test_upgrade_same_version(self):
         panel.get_latest_version = lambda: panel.CURRENT_VERSION
         ok, msg = panel.perform_upgrade()

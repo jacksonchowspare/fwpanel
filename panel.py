@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.4.0"
+CURRENT_VERSION = "1.4.1"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -268,7 +268,12 @@ class NFTManager:
         except (subprocess.CalledProcessError, FileNotFoundError):
             log("无法读取当前规则集（可能为空），跳过备份")
 
-        # 原子应用
+        # 幂等重建：先删除旧表再加载。
+        # ⚠ nft -f 对已存在的 chain 是追加语义（规则累积），不删表会导致规则爆炸 + 旧端口残留
+        subprocess.run(["nft", "delete", "table", "inet", "fwpanel"],
+                       capture_output=True, text=True)
+
+        # 加载
         try:
             result = subprocess.run(
                 ["nft", "-f", NFT_FILE], capture_output=True, text=True, timeout=15
