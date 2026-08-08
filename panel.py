@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.7.0"
+CURRENT_VERSION = "1.7.1"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -705,11 +705,13 @@ def bruteforce_cycle(config, store, now=None):
     changed = False
     # 1) 到期解封
     expired = [ip for ip, until in bans.items() if until <= now]
+    recently_unbanned = set()
     for ip in expired:
         store.rules = [r for r in store.rules
                        if not (r.get("type") == "ip_deny" and r.get("ip") == ip
                                and r.get("comment") == BAN_COMMENT)]
         del bans[ip]
+        recently_unbanned.add(ip)
         changed = True
         logs.append(f"SSH 防爆破: {ip} 封禁到期，已自动解封")
     # 2) 检测新失败并封禁
@@ -718,7 +720,8 @@ def bruteforce_cycle(config, store, now=None):
     exempt.add("::1")
     counts = get_failed_ssh_attempts(bf["fail_window"])
     for ip, n in counts.items():
-        if ip in exempt or ip in bans:
+        # 当前连接 IP / 已封禁 / 本轮回避（刚解封）都不重复处理
+        if ip in exempt or ip in bans or ip in recently_unbanned:
             continue
         if n >= bf["max_fails"]:
             if not any(r.get("type") == "ip_deny" and r.get("ip") == ip
@@ -801,6 +804,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_upgrade_check()
         elif path == "/api/ssh":
             self._api_ssh()
+        elif path == "/api/bruteforce":
+            self._api_bruteforce()
         elif path == "/api/rules":
             self._api_list_rules()
         elif path == "/api/logout":
@@ -848,6 +853,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         path = parsed.path
         if path.startswith("/api/rules/"):
             self._api_delete_rule(path.rsplit("/", 1)[1])
+        elif path.startswith("/api/bruteforce/"):
+            self._api_bruteforce_unban(path.rsplit("/", 1)[1])
         else:
             self._send(404, {"error": "Not Found"})
 
