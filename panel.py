@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.14.7"
+CURRENT_VERSION = "1.14.8"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -227,6 +227,12 @@ class RuleStore:
                 self.save()
                 return True, "ok"
         return False, "规则不存在"
+
+    def get(self, rule_id):
+        for r in self.rules:
+            if r["id"] == rule_id:
+                return r
+        return None
 
     def render(self, config):
         """生成 nftables 规则文本。config 提供模式与 ssh_port"""
@@ -1177,6 +1183,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_login()
         elif path == "/api/rules":
             self._api_add_rule()
+        elif path.startswith("/api/rules/"):
+            self._api_edit_rule(path.rsplit("/", 1)[1])
         elif path == "/api/service":
             self._api_service()
         elif path == "/api/open-port":
@@ -1677,6 +1685,28 @@ class PanelHandler(BaseHTTPRequestHandler):
         if token is None:
             return
         self._send(200, {"rules": self.server.store.rules})
+
+    def _api_edit_rule(self, rid):
+        """修改规则备注：{comment}"""
+        token = self._require_auth()
+        if token is None:
+            return
+        store = self.server.store
+        r = store.get(rid)
+        if not r:
+            self._send(400, {"error": "规则不存在"})
+            return
+        data = self._read_json()
+        if "comment" not in data:
+            self._send(400, {"error": "未提供备注内容"})
+            return
+        r["comment"] = str(data.get("comment", "")).strip()[:100]
+        store.save()
+        ok, msg = self.server.nft.apply()
+        if not ok:
+            self._send(500, {"error": msg})
+            return
+        self._send(200, {"ok": True, "msg": "备注已修改"})
 
     def _api_add_rule(self):
         token = self._require_auth()

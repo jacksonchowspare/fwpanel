@@ -798,6 +798,30 @@ class TestAPI(unittest.TestCase):
         if os.path.exists(panel.PROXIES_FILE):
             os.remove(panel.PROXIES_FILE)
 
+    def test_edit_rule_comment(self):
+        """修改规则备注 API"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/rules",
+                            {"type": "port_allow", "proto": "tcp", "port": 9991,
+                             "comment": "原始备注"}, token=token)
+        self.assertEqual(code, 200, d)
+        rid = d["rule"]["id"]
+        # 修改备注
+        code, d = self._req("POST", f"/api/rules/{rid}",
+                            {"comment": "新备注"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        r = next(x for x in d["rules"] if x["id"] == rid)
+        self.assertEqual(r["comment"], "新备注")
+        # 不存在的规则
+        code, d = self._req("POST", "/api/rules/nonexist",
+                            {"comment": "x"}, token=token)
+        self.assertEqual(code, 400)
+        self._req("DELETE", f"/api/rules/{rid}", token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
