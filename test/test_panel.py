@@ -823,9 +823,9 @@ class TestAPI(unittest.TestCase):
         self._req("DELETE", f"/api/rules/{rid}", token=token)
 
     def test_bruteforce_manual_ban(self):
-        """手动封禁/解封 IP API"""
+        """手动封禁/解封 IP API（按字母序在 full_flow 前，密码为初始值）"""
         code, d = self._req("POST", "/api/login",
-                            {"username": TEST_USER, "password": "NewPass123"})
+                            {"username": TEST_USER, "password": TEST_PASS})
         self.assertEqual(code, 200)
         token = d["token"]
         # 手动封禁
