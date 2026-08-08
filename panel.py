@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.17.0"
+CURRENT_VERSION = "1.17.1"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1189,6 +1189,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_service()
         elif path == "/api/open-port":
             self._api_open_port()
+        elif path == "/api/close-port":
+            self._api_close_port()
         elif path == "/api/mode":
             self._api_mode()
         elif path == "/api/password":
@@ -1836,6 +1838,42 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(500, {"error": msg})
             return
         self._send(200, {"ok": True, "msg": msg})
+
+    def _api_close_port(self):
+        """一键删除端口放行规则：{port, proto?} proto ∈ tcp|udp|both
+        tcp 删 tcp+both，udp 删 udp+both，both 删该端口全部放行"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        try:
+            port = int(data.get("port", 0))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "端口必须是数字"})
+            return
+        if not (1 <= port <= 65535):
+            self._send(400, {"error": "端口范围 1-65535"})
+            return
+        proto = data.get("proto", "tcp")
+        if proto not in VALID_PROTOS:
+            self._send(400, {"error": f"proto 必须是 {VALID_PROTOS} 之一"})
+            return
+        store = self.server.store
+        before = len(store.rules)
+        store.rules = [r for r in store.rules
+                       if not (r.get("type") == "port_allow" and r.get("port") == port
+                               and (r.get("proto") == proto or r.get("proto") == "both"
+                                    or proto == "both"))]
+        removed = before - len(store.rules)
+        if removed == 0:
+            self._send(200, {"ok": True, "msg": f"端口 {port} 没有可删除的放行规则", "removed": 0})
+            return
+        store.save()
+        ok, msg = self.server.nft.apply()
+        if not ok:
+            self._send(500, {"error": msg})
+            return
+        self._send(200, {"ok": True, "msg": f"已删除端口 {port} 的 {removed} 条放行规则", "removed": removed})
 
     def _api_open_port(self):
         """一键开放端口给公网：{port, proto?}（等价于添加放行规则，幂等）"""

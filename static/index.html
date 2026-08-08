@@ -184,6 +184,12 @@ tr:hover td { background: #1d2733; }
             <button class="btn" onclick="quickOpen()">一键开放</button>
             <span style="color:var(--muted);font-size:12px;align-self:center">立即添加放行规则并生效，重复开放不会报错</span>
           </div>
+          <div class="form-row" style="margin-bottom:0">
+            <input id="qp_port_del" placeholder="端口 (1-65535)" style="width:130px" inputmode="numeric">
+            <select id="qp_proto_del"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
+            <button class="btn danger" onclick="quickClose()">一键删除</button>
+            <span style="color:var(--muted);font-size:12px;align-self:center">删除该端口对应协议的放行规则（TCP 会连 TCP+UDP 一起删）</span>
+          </div>
         </div>
       </div>
 
@@ -949,6 +955,19 @@ async function quickOpen() {
       refreshAll();
     }).catch(e => toast(e.message, "err"));
   }, "⚡ 开放端口确认");
+}
+async function quickClose() {
+  const port = $("qp_port_del").value.trim();
+  if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
+  const proto = $("qp_proto_del").value;
+  const protoName = { tcp: "TCP", udp: "UDP", both: "TCP+UDP" }[proto] || proto;
+  confirmPanel(`确认删除端口 ${port}/${protoName} 的放行规则？\n\n删除后该端口将不再对外开放（防火墙默认策略决定）。`, () => {
+    api("POST", "/api/close-port", { port, proto }).then(d => {
+      toast(d.msg || `端口 ${port} 放行已删除`, "okk");
+      $("qp_port_del").value = "";
+      refreshAll();
+    }).catch(e => toast(e.message, "err"));
+  }, "🗑 删除端口确认");
 }
 async function delRule(id) {
   if (!confirm("确认删除该规则？")) return;

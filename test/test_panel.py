@@ -853,6 +853,32 @@ class TestAPI(unittest.TestCase):
         self.assertFalse(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.77"
                              for r in d["rules"]), "解封后不应有封禁规则")
 
+    def test_close_port_api(self):
+        """一键删除端口放行规则 API"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 放行 tcp 5005 和 both 5006
+        self._req("POST", "/api/open-port", {"port": 5005, "proto": "tcp"}, token=token)
+        self._req("POST", "/api/open-port", {"port": 5006, "proto": "both"}, token=token)
+        # tcp 删 5005
+        code, d = self._req("POST", "/api/close-port", {"port": 5005, "proto": "tcp"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertFalse(any(r.get("port") == 5005 for r in d["rules"]), "5005 应已删除")
+        # both 删 5006（两条：tcp+udp）
+        code, d = self._req("POST", "/api/close-port", {"port": 5006, "proto": "both"}, token=token)
+        self.assertEqual(code, 200, d)
+        self.assertEqual(d["removed"], 2)
+        # 无规则端口
+        code, d = self._req("POST", "/api/close-port", {"port": 59999, "proto": "tcp"}, token=token)
+        self.assertEqual(code, 200)
+        self.assertEqual(d["removed"], 0)
+        # 非法
+        code, d = self._req("POST", "/api/close-port", {"port": 0}, token=token)
+        self.assertEqual(code, 400)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
