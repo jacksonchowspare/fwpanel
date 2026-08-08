@@ -56,6 +56,21 @@ else
     echo "  （root 环境跳过）"
 fi
 
+echo "== gen_initial_rules 生成 SSH+面板端口放行 =="
+RULES_TMP="$(mktemp)"
+gen_initial_rules 2222 17890 "$RULES_TMP"
+python3 - "$RULES_TMP" <<'PYEOF'
+import json, sys
+rules = json.load(open(sys.argv[1]))
+assert len(rules) == 2, f"规则数 {len(rules)} != 2"
+ports = {r["port"]: r for r in rules}
+assert 2222 in ports and ports[2222]["protected"] is True, "SSH 保护规则缺失或未保护"
+assert 17890 in ports and ports[17890]["protected"] is True, "面板端口规则缺失或未保护"
+print("  ✓ 初始规则正确（SSH 2222 + 面板 17890，均 protected）")
+PYEOF
+gen_initial_rules 2222 17890 "$RULES_TMP" && echo "  ✓ 已存在不覆盖" || bad "已存在规则被覆盖"
+rm -f "$RULES_TMP"
+
 echo "== check_os 发行版识别（本机） =="
 DISTRO_ID="unknown"; PKG_MGR=""
 check_os

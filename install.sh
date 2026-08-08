@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.19.1"
+readonly SCRIPT_VERSION="1.19.2"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -255,12 +255,14 @@ resolve_params() {
 # ============================== 安装 ==============================
 
 install_deps() {
-    # 缺什么装什么（最小化安装可能没有 python3/nftables），按发行版选择包管理器
+    # 缺什么装什么（最小化安装可能没有 python3/nftables/curl/wget），按发行版选择包管理器
     local pkgs=()
     if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
         pkgs+=("$PY_PKG")
     fi
     command -v nft >/dev/null 2>&1 || pkgs+=("nftables")
+    command -v curl >/dev/null 2>&1 || pkgs+=("curl")
+    command -v wget >/dev/null 2>&1 || pkgs+=("wget")
     if [ "${#pkgs[@]}" -gt 0 ]; then
         log_info "安装依赖（$PKG_MGR）: ${pkgs[*]} ..."
         case "$PKG_MGR" in
@@ -337,7 +339,8 @@ write_config() {
     mkdir -p "$ETC_DIR"
     # 由 Python 生成密码哈希，明文密码只打印一次，绝不落盘；
     # ssh_port 自动检测系统实际 SSH 端口（防锁死保护跟随真实端口，不固定 22）
-    python3 - "$PANEL_USER" "$PANEL_PASS" "$PANEL_PORT" "$PANEL_BIND" <<'EOF'
+    local ssh_detected
+    ssh_detected="$(python3 - "$PANEL_USER" "$PANEL_PASS" "$PANEL_PORT" "$PANEL_BIND" <<'EOF'
 import sys, json, hashlib, secrets, os, subprocess
 user, pwd, port, bind = sys.argv[1:5]
 salt = secrets.token_hex(16)
@@ -369,13 +372,29 @@ with open(tmp, "w") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
 os.chmod(tmp, 0o600)
 os.replace(tmp, path)
-print(f"config.json 已生成（SSH 保护端口: {ssh_port}）")
+print(ssh_port)
 EOF
-    # 初始空规则
-    if [ ! -f "$ETC_DIR/rules.json" ]; then
-        printf '[]\n' > "$ETC_DIR/rules.json"
-        chmod 600 "$ETC_DIR/rules.json"
-    fi
+)"
+    [[ "$ssh_detected" =~ ^[0-9]{1,5}$ ]] || ssh_detected=22
+    # 初始规则：自动放行实际 SSH 端口 + 面板端口（防锁死，装完即可访问，不覆盖已有规则）
+    gen_initial_rules "$ssh_detected" "$PANEL_PORT" "$ETC_DIR/rules.json"
+}
+
+# 生成初始放行规则：SSH 端口 + 面板端口（均 protected 不可删除，防锁死）
+gen_initial_rules() {
+    local ssh_port="$1" panel_port="$2" rules_file="$3"
+    [ -f "$rules_file" ] && return 0
+    local id1 id2
+    id1="$(printf '%04x%04x%04x' $((RANDOM % 65536)) $((RANDOM % 65536)) $((RANDOM % 65536)))"
+    id2="$(printf '%04x%04x%04x' $((RANDOM % 65536)) $((RANDOM % 65536)) $((RANDOM % 65536)))"
+    cat > "$rules_file" <<EOF
+[
+  {"id": "$id1", "type": "port_allow", "proto": "tcp", "port": $ssh_port, "comment": "SSH保护(安装自动放行)", "protected": true},
+  {"id": "$id2", "type": "port_allow", "proto": "tcp", "port": $panel_port, "comment": "面板端口(安装自动放行)", "protected": true}
+]
+EOF
+    chmod 600 "$rules_file"
+    log_info "已自动放行 SSH($ssh_port) 与面板端口($panel_port)"
 }
 
 install_service() {
