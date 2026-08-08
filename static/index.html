@@ -12,7 +12,7 @@
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: var(--bg); color: var(--text); font: 14px/1.6 "PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
-.wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 60px; }
 h1 { font-size: 20px; display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
 .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
@@ -24,6 +24,10 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 .card .v { font-size: 18px; font-weight: 600; margin-top: 4px; }
 .card .v.ok { color: var(--accent2); } .card .v.off { color: var(--danger); }
 .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.grid2 .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.grid2 .panel { margin-bottom: 0; }
+@media (max-width: 1080px) { .grid2 { grid-template-columns: 1fr; } }
 .panel h2 { font-size: 15px; margin-bottom: 12px; }
 .btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
 .btn:hover { opacity: .88; }
@@ -103,100 +107,105 @@ tr:hover td { background: #1d2733; }
       <div class="card"><div class="k">面板版本</div><div class="v" id="st_ver">-</div></div>
     </div>
 
-    <div class="panel">
-      <h2>🛡 SSH 防爆破</h2>
-      <div class="form-row">
-        <label class="switch" style="margin:0"><input type="checkbox" id="bf_enabled" onchange="saveBf()"><span class="slider"></span></label>
-        <span style="align-self:center">启用（检测 SSH 登录失败自动封禁 IP，当前连接 IP 自动豁免）</span>
-      </div>
-      <div class="form-row">
-        <span style="align-self:center">失败次数</span>
-        <input id="bf_fails" style="width:60px" inputmode="numeric">
-        <span style="align-self:center">统计窗口(秒)</span>
-        <input id="bf_window" style="width:70px" inputmode="numeric">
-        <span style="align-self:center">封禁时长(秒)</span>
-        <input id="bf_seconds" style="width:80px" inputmode="numeric">
-        <button class="btn" onclick="saveBf()">保存配置</button>
-      </div>
-      <div id="bf_list" style="color:var(--muted);font-size:12px;line-height:2">当前无封禁 IP</div>
-    </div>
+    <div class="grid2">
+      <div class="col">
+        <div class="panel">
+          <h2>模式与保护</h2>
+          <div class="form-row">
+            <select id="mode_sel">
+              <option value="permissive">宽松模式（默认放行，按需拒绝）</option>
+              <option value="strict">严格模式（默认拒绝，白名单放行）</option>
+            </select>
+            <button class="btn" onclick="setMode()">应用模式</button>
+          </div>
+          <div class="form-row">
+            <span style="align-self:center">SSH 保护端口</span>
+            <input id="ssh_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
+            <button class="btn ghost" onclick="setSshPort()">仅更新防火墙保护</button>
+            <button class="btn danger" onclick="applySshPort()">同步修改系统 SSH 端口</button>
+            <span id="sshd_hint" style="color:var(--muted);font-size:12px;align-self:center"></span>
+          </div>
+          <div style="color:var(--muted);font-size:12px">
+            保护规则永远存在防锁死；切换端口时旧端口会临时放行，确认新端口可登录后删除临时规则
+          </div>
+        </div>
 
-    <div class="panel">
-      <h2>⚙️ 面板设置</h2>
-      <div class="form-row">
-        <span style="align-self:center">面板端口</span>
-        <input id="panel_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
-        <button class="btn" onclick="setPanelPort()">修改端口</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">修改后服务重启，需用新端口访问（旧端口同时失效）</span>
-      </div>
-      <div class="form-row">
-        <span style="align-self:center">登录用户名</span>
-        <input id="username_input" placeholder="用户名" style="width:130px">
-        <button class="btn" onclick="setUsername()">修改用户名</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">下次登录生效（3-32 位字母数字）</span>
-      </div>
-    </div>
+        <div class="panel">
+          <h2>服务快捷开关</h2>
+          <div id="svc_list"></div>
+        </div>
 
-    <div class="panel">
-      <h2>🔄 系统更新</h2>
-      <div class="form-row">
-        <span style="align-self:center">当前版本 <b id="cur_ver">-</b> ｜ 最新版本 <b id="latest_ver">-</b></span>
-        <button class="btn ghost" onclick="checkUpgrade()">检查更新</button>
-        <button class="btn" id="btn_upgrade" onclick="doUpgrade()" disabled>一键升级</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">升级自动备份+校验+回滚，完成后服务重启需重新登录</span>
-      </div>
-    </div>
+        <div class="panel">
+          <h2>⚡ 一键开放端口（公网）</h2>
+          <div class="form-row">
+            <input id="qp_port" placeholder="端口 (1-65535)" style="width:130px" inputmode="numeric">
+            <select id="qp_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
+            <button class="btn" onclick="quickOpen()">一键开放</button>
+            <span style="color:var(--muted);font-size:12px;align-self:center">立即添加放行规则并生效，重复开放不会报错</span>
+          </div>
+        </div>
 
-    <div class="panel">
-      <h2>模式与保护</h2>
-      <div class="form-row">
-        <select id="mode_sel">
-          <option value="permissive">宽松模式（默认放行，按需拒绝）</option>
-          <option value="strict">严格模式（默认拒绝，白名单放行）</option>
-        </select>
-        <button class="btn" onclick="setMode()">应用模式</button>
+        <div class="panel">
+          <h2>添加规则</h2>
+          <div class="form-row">
+            <select id="r_type">
+              <option value="port_allow">放行端口</option>
+              <option value="port_deny">拒绝端口</option>
+              <option value="ip_allow">放行 IP</option>
+              <option value="ip_deny">拒绝 IP</option>
+            </select>
+            <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
+            <input id="r_port" placeholder="端口 (1-65535)" style="width:110px">
+            <input id="r_ip" placeholder="IP/IP段/IP范围（1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50）" style="width:200px">
+            <input id="r_comment" placeholder="备注（可选）" style="width:120px">
+            <button class="btn" onclick="addRule()">添加</button>
+          </div>
+        </div>
       </div>
-      <div class="form-row">
-        <span style="align-self:center">SSH 保护端口</span>
-        <input id="ssh_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
-        <button class="btn ghost" onclick="setSshPort()">仅更新防火墙保护</button>
-        <button class="btn danger" onclick="applySshPort()">同步修改系统 SSH 端口</button>
-        <span id="sshd_hint" style="color:var(--muted);font-size:12px;align-self:center"></span>
-      </div>
-      <div style="color:var(--muted);font-size:12px">
-        保护规则永远存在防锁死；切换端口时旧端口会临时放行，确认新端口可登录后删除临时规则
-      </div>
-    </div>
 
-    <div class="panel">
-      <h2>服务快捷开关</h2>
-      <div id="svc_list"></div>
-    </div>
+      <div class="col">
+        <div class="panel">
+          <h2>🛡 SSH 防爆破</h2>
+          <div class="form-row">
+            <label class="switch" style="margin:0"><input type="checkbox" id="bf_enabled" onchange="saveBf()"><span class="slider"></span></label>
+            <span style="align-self:center">启用（检测 SSH 登录失败自动封禁 IP，当前连接 IP 自动豁免）</span>
+          </div>
+          <div class="form-row">
+            <span style="align-self:center">失败次数</span>
+            <input id="bf_fails" style="width:55px" inputmode="numeric">
+            <span style="align-self:center">窗口(秒)</span>
+            <input id="bf_window" style="width:60px" inputmode="numeric">
+            <span style="align-self:center">封禁(秒)</span>
+            <input id="bf_seconds" style="width:70px" inputmode="numeric">
+            <button class="btn" onclick="saveBf()">保存</button>
+          </div>
+          <div id="bf_list" style="color:var(--muted);font-size:12px;line-height:2">当前无封禁 IP</div>
+        </div>
 
-    <div class="panel">
-      <h2>⚡ 一键开放端口（公网）</h2>
-      <div class="form-row">
-        <input id="qp_port" placeholder="端口 (1-65535)" style="width:130px" inputmode="numeric">
-        <select id="qp_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
-        <button class="btn" onclick="quickOpen()">一键开放</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">立即添加放行规则并生效，重复开放不会报错</span>
-      </div>
-    </div>
+        <div class="panel">
+          <h2>⚙️ 面板设置</h2>
+          <div class="form-row">
+            <span style="align-self:center">面板端口</span>
+            <input id="panel_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
+            <button class="btn" onclick="setPanelPort()">修改端口</button>
+            <span style="color:var(--muted);font-size:12px;align-self:center">改后自动删旧放新并跳转</span>
+          </div>
+          <div class="form-row">
+            <span style="align-self:center">登录用户名</span>
+            <input id="username_input" placeholder="用户名" style="width:120px">
+            <button class="btn" onclick="setUsername()">修改用户名</button>
+            <span style="color:var(--muted);font-size:12px;align-self:center">下次登录生效</span>
+          </div>
+        </div>
 
-    <div class="panel">
-      <h2>添加规则</h2>
-      <div class="form-row">
-        <select id="r_type">
-          <option value="port_allow">放行端口</option>
-          <option value="port_deny">拒绝端口</option>
-          <option value="ip_allow">放行 IP</option>
-          <option value="ip_deny">拒绝 IP</option>
-        </select>
-        <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
-        <input id="r_port" placeholder="端口 (1-65535)" style="width:120px">
-        <input id="r_ip" placeholder="IP/IP段/IP范围（1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50）" style="width:230px">
-        <input id="r_comment" placeholder="备注（可选）" style="width:150px">
-        <button class="btn" onclick="addRule()">添加</button>
+        <div class="panel">
+          <h2>🔄 系统更新</h2>
+          <div class="form-row">
+            <span style="align-self:center">当前版本 <b id="cur_ver">-</b> ｜ 最新版本 <b id="latest_ver">-</b></span>
+            <button class="btn ghost" onclick="checkUpgrade()">检查更新</button>
+            <button class="btn" id="btn_upgrade" onclick="doUpgrade()" disabled>一键升级</button>
+          </div>
+        </div>
       </div>
     </div>
 
