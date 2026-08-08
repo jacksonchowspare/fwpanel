@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.7.6"
+CURRENT_VERSION = "1.7.7"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -335,6 +335,20 @@ class NFTManager:
             return False, f"nft 报错: {result.stderr.strip()[:300]}"
         log(f"规则已应用（{len(self.store.rules)} 条用户规则，模式 {self.config.get('mode', 'permissive')}）")
         return True, "ok"
+
+    def disable(self):
+        """关闭防火墙：删除 fwpanel 表（rules.json 保留，重新开启时恢复）"""
+        if DRY_RUN:
+            log("[dry-run] 删除 fwpanel 表（跳过 nft 执行）")
+            return True, "dry-run"
+        try:
+            r = subprocess.run(["nft", "delete", "table", "inet", "fwpanel"],
+                               capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                return False, r.stderr.strip()[:200]
+            return True, "ok"
+        except FileNotFoundError:
+            return False, "nft 不可用"
 
     def status(self):
         """返回面板管理的规则是否已加载"""
@@ -716,6 +730,9 @@ def bruteforce_cycle(config, store, now=None):
     bf = bf_cfg(config)
     if not bf["enabled"]:
         return logs
+    if not config.get("firewall_enabled", True):
+        # 防火墙已关闭：无拦截可言，跳过扫描（开启后自动恢复）
+        return logs
     now = time.time() if now is None else now
     bans = load_bans()
     changed = False
@@ -859,6 +876,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_bruteforce_set()
         elif path.startswith("/api/bruteforce/"):
             self._api_bruteforce_unban(path.rsplit("/", 1)[1])
+        elif path == "/api/firewall":
+            self._api_firewall()
         elif path == "/api/username":
             self._api_username()
         else:
@@ -1127,6 +1146,29 @@ class PanelHandler(BaseHTTPRequestHandler):
         store.save()
         self.server.nft.apply()
         self._send(200, {"ok": True, "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
+
+    def _api_firewall(self):
+        """一键开启/关闭防火墙：{enabled: true|false}
+        关闭=删除 nftables 表（规则配置保留，开启时恢复）；开启=重新加载规则"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        enabled = bool(data.get("enabled"))
+        if enabled:
+            ok, msg = self.server.nft.apply()
+            if not ok:
+                self._send(500, {"error": f"开启失败: {msg}"})
+                return
+            self.server.config.set("firewall_enabled", True)
+            self._send(200, {"ok": True, "msg": "防火墙已开启（规则已加载生效）"})
+        else:
+            ok, msg = self.server.nft.disable()
+            if not ok:
+                self._send(500, {"error": f"关闭失败: {msg}"})
+                return
+            self.server.config.set("firewall_enabled", False)
+            self._send(200, {"ok": True, "msg": "防火墙已关闭（所有端口放行，规则配置已保留，重新开启恢复）"})
 
     def _api_list_rules(self):
         token = self._require_auth()

@@ -625,6 +625,21 @@ class TestAPI(unittest.TestCase):
         self.assertTrue(d.get("distro"), "status 应包含发行版信息")
         self.assertTrue(d.get("hostname"))
 
+    def test_firewall_api(self):
+        """一键开关防火墙 API"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 关闭（dry-run 环境：disable 走 dry-run 返回成功）
+        code, d = self._req("POST", "/api/firewall", {"enabled": False}, token=token)
+        self.assertEqual(code, 200, d)
+        self.assertFalse(self.cfg.get("firewall_enabled"), "关闭后应记录状态")
+        # 开启
+        code, d = self._req("POST", "/api/firewall", {"enabled": True}, token=token)
+        self.assertEqual(code, 200, d)
+        self.assertTrue(self.cfg.get("firewall_enabled"))
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -845,6 +860,44 @@ class TestUpgrade(unittest.TestCase):
         store.rules = []
         real_a = panel.get_failed_ssh_attempts
         panel.get_failed_ssh_attempts = lambda w: {"1.2.3.4": 999}
+        try:
+            logs = panel.bruteforce_cycle(cfg, store, now=1000)
+            self.assertEqual(logs, [])
+            self.assertEqual(store.rules, [])
+        finally:
+            panel.get_failed_ssh_attempts = real_a
+
+    def test_disable_deletes_table(self):
+        """关闭防火墙：删除 fwpanel 表"""
+        import subprocess as sp
+        calls = []
+        real_run = panel.subprocess.run
+        real_dry = panel.DRY_RUN
+
+        def fake_run(cmd, *a, **k):
+            calls.append(cmd)
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        panel.subprocess.run = fake_run
+        panel.DRY_RUN = False
+        try:
+            nft = panel.NFTManager(panel.RuleStore(), make_cfg())
+            ok, msg = nft.disable()
+            self.assertTrue(ok, msg)
+            self.assertIn(["nft", "delete", "table", "inet", "fwpanel"], calls)
+        finally:
+            panel.subprocess.run = real_run
+            panel.DRY_RUN = real_dry
+
+    def test_bf_skipped_when_fw_disabled(self):
+        """防火墙关闭时防爆破扫描跳过"""
+        cfg = make_cfg()
+        cfg.set("bruteforce", {"enabled": True, "max_fails": 2, "ban_seconds": 600, "fail_window": 300})
+        cfg.set("firewall_enabled", False)
+        store = panel.RuleStore()
+        store.rules = []
+        real_a = panel.get_failed_ssh_attempts
+        panel.get_failed_ssh_attempts = lambda w: {"1.2.3.4": 99}
         try:
             logs = panel.bruteforce_cycle(cfg, store, now=1000)
             self.assertEqual(logs, [])

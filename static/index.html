@@ -103,7 +103,12 @@ tr:hover td { background: #1d2733; }
     </div>
 
     <div class="cards">
-      <div class="card"><div class="k">防火墙状态</div><div class="v ok" id="st_fw">-</div></div>
+      <div class="card"><div class="k">防火墙状态</div><div class="v ok" id="st_fw">-</div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+          <button class="btn mini" id="btn_fw_on" onclick="setFw(true)" style="display:none">开启防火墙</button>
+          <button class="btn mini danger" id="btn_fw_off" onclick="setFw(false)" style="display:none">关闭防火墙</button>
+        </div>
+      </div>
       <div class="card"><div class="k">规则模式</div><div class="v" id="st_mode">-</div></div>
       <div class="card"><div class="k">规则数量</div><div class="v" id="st_rules">-</div></div>
       <div class="card"><div class="k">SSH 保护端口</div><div class="v" id="st_ssh">-</div></div>
@@ -278,6 +283,8 @@ async function refreshAll() {
     $("sub_title").textContent = (status.distro || "Linux") + " · nftables 防火墙控制面板";
     $("st_fw").textContent = status.loaded ? "已生效" : "未加载";
     $("st_fw").className = "v " + (status.loaded ? "ok" : "off");
+    $("btn_fw_on").style.display = status.loaded ? "none" : "inline-block";
+    $("btn_fw_off").style.display = status.loaded ? "inline-block" : "none";
     $("st_mode").textContent = status.mode === "strict" ? "严格（默认拒绝）" : "宽松（默认放行）";
     $("st_rules").textContent = status.rule_count;
     $("st_ssh").textContent = status.ssh_port;
@@ -374,6 +381,17 @@ async function applySshPort() {
     toast(d.msg || "SSH 端口已切换", "okk");
     refreshAll();
   } catch (e) { toast("切换失败: " + e.message, "err"); }
+}
+
+/* ---------- 防火墙开关 ---------- */
+async function setFw(on) {
+  if (!on && !confirm("确认关闭防火墙？\n\n关闭后所有端口对外开放，不再有任何拦截（含 SSH 防爆破、黑白名单）。\n规则配置会保留，重新开启时恢复。")) return;
+  if (on && !confirm("确认开启防火墙？\n\n将按当前规则配置重新加载并生效。")) return;
+  try {
+    const d = await api("POST", "/api/firewall", { enabled: on });
+    toast(d.msg || (on ? "防火墙已开启" : "防火墙已关闭"), "okk");
+    refreshAll();
+  } catch (e) { toast(e.message, "err"); }
 }
 
 /* ---------- 系统更新 ---------- */
