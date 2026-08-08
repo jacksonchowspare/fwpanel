@@ -32,17 +32,22 @@ import hmac
 import json
 import os
 import secrets
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
+CURRENT_VERSION = "1.2.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
+APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 RULES_FILE = os.path.join(BASE_DIR, "rules.json")
 NFT_FILE = os.path.join(BASE_DIR, "firewall.nft")
@@ -56,6 +61,13 @@ SSH_PORT_DEFAULT = 22
 TOKEN_TTL = 24 * 3600          # token 有效期 24 小时
 LOCK_MAX_FAIL = 5              # 连续失败次数
 LOCK_SECONDS = 300             # 锁定 5 分钟
+
+# 升级源（国内友好优先）：jsDelivr → GitHub raw → ghproxy
+UPGRADE_SOURCES = [
+    "https://cdn.jsdelivr.net/gh/jacksonchowspare/fwpanel@{tag}/{path}",
+    "https://raw.githubusercontent.com/jacksonchowspare/fwpanel/{tag}/{path}",
+    "https://ghproxy.com/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/{tag}/{path}",
+]
 
 # 服务模板：名称 -> (协议, 端口)
 SERVICES = {
@@ -320,6 +332,126 @@ class Auth:
         self.tokens.pop(token, None)
 
 
+# ------------------------------- 升级功能 -------------------------------
+
+def http_get_json(url, timeout=8):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def http_download(url, dest, timeout=15):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            data = r.read()
+        if not data:
+            return False
+        with open(dest, "wb") as f:
+            f.write(data)
+        return True
+    except Exception:
+        return False
+
+
+def version_tuple(v):
+    return tuple(int(x) for x in str(v).split("."))
+
+
+def version_gt(a, b):
+    """a > b（语义化版本比较，处理 1.10.0 > 1.9.0）"""
+    return version_tuple(a) > version_tuple(b)
+
+
+def get_latest_version():
+    """查询 GitHub 最新版本号（GitHub API → jsDelivr data API 双源）"""
+    d = http_get_json("https://api.github.com/repos/jacksonchowspare/fwpanel/releases/latest")
+    if d and d.get("tag_name"):
+        return d["tag_name"].lstrip("v")
+    d = http_get_json("https://data.jsdelivr.com/v1/package/gh/jacksonchowspare/fwpanel")
+    if d and d.get("versions"):
+        return d["versions"][0]
+    return None
+
+
+def download_panel_files(tag, tmpdir):
+    """按版本号下载 panel.py 和 index.html 到临时目录；返回 (py_path, html_path) 或 None"""
+    ok, py_path = False, os.path.join(tmpdir, "panel.py")
+    for tpl in UPGRADE_SOURCES:
+        if http_download(tpl.format(tag=tag, path="panel.py"), py_path):
+            ok = True
+            break
+    if not ok:
+        return None
+    ok, html_path = False, os.path.join(tmpdir, "index.html")
+    for tpl in UPGRADE_SOURCES:
+        if http_download(tpl.format(tag=tag, path="static/index.html"), html_path):
+            ok = True
+            break
+    if not ok:
+        return None
+    return py_path, html_path
+
+
+def perform_upgrade():
+    """一键升级：检查版本 → 下载 → 校验 → 备份 → 替换 → 延迟重启。返回 (ok, msg)"""
+    latest = get_latest_version()
+    if not latest:
+        return False, "无法获取最新版本（网络问题），请稍后再试"
+    if not version_gt(latest, CURRENT_VERSION):
+        return False, f"已是最新版本 v{CURRENT_VERSION}"
+
+    tmpdir = tempfile.mkdtemp(prefix="fwpanel-upgrade-")
+    backup_py = os.path.join(APP_DIR, "panel.py.bak")
+    backup_html = os.path.join(APP_DIR, "static", "index.html.bak")
+    panel_py = os.path.join(APP_DIR, "panel.py")
+    panel_html = os.path.join(APP_DIR, "static", "index.html")
+    try:
+        files = download_panel_files(latest, tmpdir)
+        if not files:
+            return False, "下载新版文件失败，请检查网络"
+        new_py, new_html = files
+        # 校验：新版 panel.py 必须语法通过，且版本号确实更新
+        try:
+            import py_compile
+            py_compile.compile(new_py, doraise=True)
+        except Exception as e:
+            return False, f"新版文件校验失败，已中止: {e}"
+        try:
+            with open(new_py, encoding="utf-8") as f:
+                src = f.read()
+            m = __import__("re").search(r'CURRENT_VERSION\s*=\s*"([\d.]+)"', src)
+            if m and m.group(1) == CURRENT_VERSION:
+                return False, "下载到的版本与当前相同，请稍后重试"
+        except Exception:
+            pass
+        # 备份当前文件
+        shutil.copy2(panel_py, backup_py)
+        shutil.copy2(panel_html, backup_html)
+        # 替换
+        os.chmod(new_py, 0o755)
+        shutil.copy2(new_py, panel_py)
+        shutil.copy2(new_html, panel_html)
+    except Exception as e:
+        # 失败回滚
+        try:
+            if os.path.exists(backup_py):
+                shutil.copy2(backup_py, panel_py)
+            if os.path.exists(backup_html):
+                shutil.copy2(backup_html, panel_html)
+        except Exception:
+            pass
+        return False, f"升级失败，已自动回滚: {e}"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 延迟重启，确保响应先送达浏览器
+    threading.Timer(1.5, lambda: subprocess.run(
+        ["systemctl", "restart", "fwpanel"], capture_output=True)).start()
+    return True, f"已升级到 v{latest}，服务重启中，请稍候重新登录"
+
+
 # ------------------------------- HTTP 服务 -------------------------------
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -371,6 +503,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._serve_static()
         elif path == "/api/status":
             self._api_status()
+        elif path == "/api/upgrade/check":
+            self._api_upgrade_check()
         elif path == "/api/rules":
             self._api_list_rules()
         elif path == "/api/logout":
@@ -396,6 +530,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_mode()
         elif path == "/api/password":
             self._api_password()
+        elif path == "/api/upgrade":
+            self._api_upgrade()
         else:
             self._send(404, {"error": "Not Found"})
 
@@ -443,8 +579,32 @@ class PanelHandler(BaseHTTPRequestHandler):
             "ssh_port": int(cfg.get("ssh_port", SSH_PORT_DEFAULT)),
             "loaded": nft.status(),
             "rule_count": len(self.server.store.rules),
-            "version": "1.1.2",
+            "version": CURRENT_VERSION,
         })
+
+    def _api_upgrade_check(self):
+        token = self._require_auth()
+        if token is None:
+            return
+        latest = get_latest_version()
+        if latest is None:
+            self._send(502, {"error": "无法连接版本服务器，请稍后再试"})
+            return
+        self._send(200, {
+            "current": CURRENT_VERSION,
+            "latest": latest,
+            "update_available": version_gt(latest, CURRENT_VERSION),
+        })
+
+    def _api_upgrade(self):
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = perform_upgrade()
+        if not ok:
+            self._send(500, {"error": msg})
+            return
+        self._send(200, {"ok": True, "msg": msg})
 
     def _api_list_rules(self):
         token = self._require_auth()

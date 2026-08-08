@@ -100,6 +100,17 @@ tr:hover td { background: #1d2733; }
       <div class="card"><div class="k">规则模式</div><div class="v" id="st_mode">-</div></div>
       <div class="card"><div class="k">规则数量</div><div class="v" id="st_rules">-</div></div>
       <div class="card"><div class="k">SSH 保护端口</div><div class="v" id="st_ssh">-</div></div>
+      <div class="card"><div class="k">面板版本</div><div class="v" id="st_ver">-</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>🔄 系统更新</h2>
+      <div class="form-row">
+        <span style="align-self:center">当前版本 <b id="cur_ver">-</b> ｜ 最新版本 <b id="latest_ver">-</b></span>
+        <button class="btn ghost" onclick="checkUpgrade()">检查更新</button>
+        <button class="btn" id="btn_upgrade" onclick="doUpgrade()" disabled>一键升级</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">升级自动备份+校验+回滚，完成后服务重启需重新登录</span>
+      </div>
     </div>
 
     <div class="panel">
@@ -217,10 +228,39 @@ async function refreshAll() {
     $("st_mode").textContent = status.mode === "strict" ? "严格（默认拒绝）" : "宽松（默认放行）";
     $("st_rules").textContent = status.rule_count;
     $("st_ssh").textContent = status.ssh_port;
+    $("st_ver").textContent = "v" + status.version;
     $("ssh_port").textContent = status.ssh_port;
     $("mode_sel").value = status.mode;
     renderSvc(); renderRules();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+/* ---------- 系统更新 ---------- */
+let upgradeInfo = null;
+async function checkUpgrade() {
+  try {
+    const d = await api("GET", "/api/upgrade/check");
+    upgradeInfo = d;
+    $("cur_ver").textContent = "v" + d.current;
+    $("latest_ver").textContent = d.update_available ? "v" + d.latest : "已是最新";
+    $("btn_upgrade").disabled = !d.update_available;
+    toast(d.update_available ? `发现新版本 v${d.latest}，可一键升级` : "已是最新版本", d.update_available ? "okk" : "");
+  } catch (e) { toast("检查更新失败: " + e.message, "err"); }
+}
+async function doUpgrade() {
+  if (!upgradeInfo || !upgradeInfo.update_available) return;
+  if (!confirm(`确认升级到 v${upgradeInfo.latest}？升级过程约 10-30 秒，完成后需重新登录。`)) return;
+  const btn = $("btn_upgrade");
+  btn.disabled = true; btn.textContent = "升级中...";
+  try {
+    const d = await api("POST", "/api/upgrade");
+    toast(d.msg || "升级成功", "okk");
+    setTimeout(() => { location.reload(); }, 4000);
+  } catch (e) {
+    toast("升级失败: " + e.message, "err");
+    btn.disabled = false; btn.textContent = "一键升级";
+    checkUpgrade();
+  }
 }
 
 /* ---------- 服务开关 ---------- */

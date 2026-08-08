@@ -3,6 +3,7 @@
 """fwpanel 单元测试 + HTTP API 冒烟测试（无需 root，使用临时目录 + dry-run）"""
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -176,6 +177,25 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("POST", "/api/open-port", {"port": 99999}, token=token)
         self.assertEqual(code, 400)
 
+    def test_upgrade_api_check(self):
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        real = panel.get_latest_version
+        panel.get_latest_version = lambda: "9.9.9"
+        try:
+            code, d = self._req("GET", "/api/upgrade/check", token=token)
+            self.assertEqual(code, 200)
+            self.assertEqual(d["current"], panel.CURRENT_VERSION)
+            self.assertEqual(d["latest"], "9.9.9")
+            self.assertTrue(d["update_available"])
+            # 未登录拒绝
+            code, _ = self._req("GET", "/api/upgrade/check")
+            self.assertEqual(code, 401)
+        finally:
+            panel.get_latest_version = real
+
     def test_full_flow(self):
         # 未登录访问被拒
         code, _ = self._req("GET", "/api/status")
@@ -230,6 +250,87 @@ class TestAPI(unittest.TestCase):
         self._req("GET", "/api/logout", token=token)
         code, _ = self._req("GET", "/api/status", token=token)
         self.assertEqual(code, 401)
+
+
+class TestUpgrade(unittest.TestCase):
+    """一键升级核心逻辑：备份/替换/回滚（APP_DIR 指向临时目录，不碰真实系统）"""
+
+    def setUp(self):
+        self.app_tmp = tempfile.mkdtemp(prefix="fwpanel-app-")
+        os.makedirs(os.path.join(self.app_tmp, "static"))
+        self.old_app_dir = panel.APP_DIR
+        panel.APP_DIR = self.app_tmp
+        # 模拟"已安装"的旧文件
+        with open(os.path.join(self.app_tmp, "panel.py"), "w") as f:
+            f.write('# CURRENT_VERSION = "1.2.0"\nprint("old panel")\n')
+        with open(os.path.join(self.app_tmp, "static", "index.html"), "w") as f:
+            f.write("<html>old</html>")
+        # 屏蔽重启动作
+        self.real_timer = panel.threading.Timer
+        class FakeTimer:
+            def __init__(self, delay, fn):
+                self.fn = fn
+            def start(self):
+                pass
+        panel.threading.Timer = FakeTimer
+        self.real_run = panel.subprocess.run
+        panel.subprocess.run = lambda *a, **k: None
+
+    def tearDown(self):
+        panel.APP_DIR = self.old_app_dir
+        panel.threading.Timer = self.real_timer
+        panel.subprocess.run = self.real_run
+        shutil.rmtree(self.app_tmp, ignore_errors=True)
+
+    def _make_new_files(self, version="9.9.9", broken=False):
+        src = tempfile.mkdtemp(prefix="fwpanel-new-")
+        py_content = f'CURRENT_VERSION = "{version}"\nprint("new panel")\n'
+        if broken:
+            py_content = "def broken(:\n"
+        with open(os.path.join(src, "panel.py"), "w") as f:
+            f.write(py_content)
+        with open(os.path.join(src, "index.html"), "w") as f:
+            f.write("<html>new</html>")
+        return os.path.join(src, "panel.py"), os.path.join(src, "index.html")
+
+    def test_upgrade_success(self):
+        panel.get_latest_version = lambda: "9.9.9"
+        panel.download_panel_files = lambda tag, tmp: self._make_new_files("9.9.9")
+        ok, msg = panel.perform_upgrade()
+        self.assertTrue(ok, msg)
+        with open(os.path.join(self.app_tmp, "panel.py")) as f:
+            self.assertIn("9.9.9", f.read())
+        self.assertTrue(os.path.exists(os.path.join(self.app_tmp, "panel.py.bak")),
+                        "升级应生成备份文件")
+
+    def test_version_compare(self):
+        self.assertTrue(panel.version_gt("1.10.0", "1.9.0"))
+        self.assertTrue(panel.version_gt("1.2.1", "1.2.0"))
+        self.assertFalse(panel.version_gt("1.2.0", "1.2.0"))
+        self.assertFalse(panel.version_gt("1.1.3", "1.2.0"))
+
+    def test_upgrade_same_version(self):
+        panel.get_latest_version = lambda: panel.CURRENT_VERSION
+        ok, msg = panel.perform_upgrade()
+        self.assertFalse(ok)
+        self.assertIn("已是最新", msg)
+
+    def test_upgrade_download_fail_keeps_old(self):
+        panel.get_latest_version = lambda: "9.9.9"
+        panel.download_panel_files = lambda tag, tmp: None
+        ok, msg = panel.perform_upgrade()
+        self.assertFalse(ok)
+        with open(os.path.join(self.app_tmp, "panel.py")) as f:
+            self.assertIn("old panel", f.read())
+
+    def test_upgrade_broken_file_keeps_old(self):
+        panel.get_latest_version = lambda: "9.9.9"
+        panel.download_panel_files = lambda tag, tmp: self._make_new_files(broken=True)
+        ok, msg = panel.perform_upgrade()
+        self.assertFalse(ok)
+        self.assertIn("校验失败", msg)
+        with open(os.path.join(self.app_tmp, "panel.py")) as f:
+            self.assertIn("old panel", f.read())
 
 
 if __name__ == "__main__":
