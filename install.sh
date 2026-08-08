@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# fwpanel — 自研防火墙控制面板 一键安装包（适配 Debian 13 Trixie / 兼容 11、12）
+# fwpanel — 自研防火墙控制面板 一键安装包（Debian/Ubuntu/Arch/Fedora 多发行版）
 # -----------------------------------------------------------------------------
 # 零第三方依赖：Python 标准库 + 系统 nftables，不装 firewalld/ufw。
 #
 # 用法：
-#   sudo bash install.sh                         一键安装（随机凭据，打印一次）
-#   sudo bash install.sh -p 17890 --bind 0.0.0.0 指定端口 / 开放远程访问
+#   sudo bash install.sh                         一键安装（随机端口/用户名/密码，一并打印）
+#   sudo bash install.sh -p 17890                指定面板端口
+#   sudo bash install.sh --bind 127.0.0.1        仅本机访问（默认 0.0.0.0 开放远程）
 #   sudo bash install.sh --user admin --password MyPass123  指定凭据
 #   sudo bash install.sh --check                 仅体检环境
 #   sudo bash install.sh --change-password       重置面板密码（交互式）
@@ -20,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.18.4"
+readonly SCRIPT_VERSION="1.19.0"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -147,17 +148,17 @@ usage() {
 $SCRIPT_NAME v$SCRIPT_VERSION —— 自研防火墙控制面板（Debian 13 · nftables）
 
 用法:
-  sudo bash $0                           一键安装（随机端口/用户名/密码，凭据只打印一次）
+  sudo bash $0                           一键安装（随机端口/用户名/密码，安装结束一并打印）
   sudo bash $0 -p 17890                  指定面板端口
-  sudo bash $0 --bind 0.0.0.0            开放局域网/远程访问（默认仅本机 127.0.0.1）
+  sudo bash $0 --bind 127.0.0.1          仅本机访问（默认 0.0.0.0 开放远程）
   sudo bash $0 --user admin --password x  指定登录凭据
   sudo bash $0 --check                   仅体检环境
   sudo bash $0 --change-password         重置面板密码（交互式）
   sudo bash $0 --uninstall               卸载（停服务 + 删文件）
 
 选项:
-  -p, --port PORT     面板端口（默认 17890，被占用自动随机 17000-19999）
-      --bind IP       监听地址（默认 127.0.0.1 仅本机；远程访问用 0.0.0.0）
+  -p, --port PORT     面板端口（默认随机 17000-19999）
+      --bind IP       监听地址（默认 0.0.0.0 开放远程访问）
       --user NAME     登录用户名（默认随机 8 位）
       --password PASS 登录密码，≥8 位（默认随机 16 位强密码）
       --open-port P   安装后立即开放端口给公网（逗号分隔，如 80,443 或 53/udp）
@@ -217,17 +218,14 @@ port_in_use() {
 }
 
 resolve_params() {
-    [ -n "$PANEL_BIND" ] || PANEL_BIND="127.0.0.1"
+    [ -n "$PANEL_BIND" ] || PANEL_BIND="0.0.0.0"
     if [ -z "$PANEL_PORT" ]; then
-        PANEL_PORT="17890"
-        if port_in_use "$PANEL_PORT"; then
-            log_warn "端口 17890 被占用，自动分配新端口"
-            local p
-            while :; do
-                p=$((RANDOM % 3000 + 17000))
-                port_in_use "$p" || { PANEL_PORT="$p"; break; }
-            done
-        fi
+        # 默认随机端口 17000-19999（每次安装不同，安装结束一并打印）
+        local p
+        while :; do
+            p=$((RANDOM % 3000 + 17000))
+            port_in_use "$p" || { PANEL_PORT="$p"; break; }
+        done
     fi
     [[ "$PANEL_PORT" =~ ^[0-9]{1,5}$ ]] || error "端口必须为数字: $PANEL_PORT"
     port_in_use "$PANEL_PORT" && error "端口 $PANEL_PORT 已被占用，请换一个"

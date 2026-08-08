@@ -24,8 +24,8 @@ u=$(gen_user)
 echo "== resolve_params 默认值 =="
 PANEL_PORT=""; PANEL_BIND=""; PANEL_USER=""; PANEL_PASS=""
 resolve_params
-[ -n "$PANEL_PORT" ] && [ "$PANEL_BIND" = "127.0.0.1" ] && [ -n "$PANEL_USER" ] \
-    && [ "${#PANEL_PASS}" -ge 8 ] && ok "默认参数齐全 PORT=$PANEL_PORT USER=$PANEL_USER" || bad "默认参数缺失"
+[ -n "$PANEL_PORT" ] && [ "$PANEL_BIND" = "0.0.0.0" ] && [ -n "$PANEL_USER" ] \
+    && [ "${#PANEL_PASS}" -ge 8 ] && ok "默认参数齐全 PORT=$PANEL_PORT BIND=$PANEL_BIND" || bad "默认参数缺失"
 
 echo "== resolve_params 非法端口应报错（子shell） =="
 PANEL_PORT="abc"; PANEL_BIND=""; PANEL_USER="x"; PANEL_PASS="12345678"
