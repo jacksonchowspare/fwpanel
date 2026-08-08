@@ -262,6 +262,27 @@ class TestAPI(unittest.TestCase):
                 if r.get("comment") == panel.SSH_OLD_PORT_COMMENT:
                     self._req("DELETE", f"/api/rules/{r['id']}", token=token)
 
+    def test_mode_strict_auto_port(self):
+        """切严格模式自动放行面板端口（防锁死）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/mode", {"mode": "strict"}, token=token)
+        self.assertEqual(code, 200, d)
+        self.assertIn("已自动放行面板端口", d["msg"])
+        # 面板端口规则已添加（cfg port=17999）
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r.get("comment") == panel.PANEL_PORT_COMMENT
+                            and r.get("port") == 17999 for r in d["rules"]),
+                        "严格模式下应自动放行面板端口")
+        text = self.store.render(self.cfg)
+        self.assertIn("policy drop", text)
+        self.assertIn("tcp dport 17999 accept", text)
+        # 恢复宽松
+        code, d = self._req("POST", "/api/mode", {"mode": "permissive"}, token=token)
+        self.assertEqual(code, 200)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

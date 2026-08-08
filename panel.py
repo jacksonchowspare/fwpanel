@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.3.0"
+CURRENT_VERSION = "1.3.1"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -84,6 +84,9 @@ VALID_PROTOS = ("tcp", "udp", "both")
 
 # SSH 端口切换时的临时放行规则注释（确认新端口可用后手动删除）
 SSH_OLD_PORT_COMMENT = "旧SSH端口-切换保护"
+
+# 严格模式下面板端口自动放行规则的注释（防止面板自身被锁死）
+PANEL_PORT_COMMENT = "面板端口-严格模式"
 
 # ------------------------------- 基础工具 -------------------------------
 
@@ -846,7 +849,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "msg": f"端口 {port}/{proto} 已开放给公网", "rule": rule})
 
     def _api_mode(self):
-        """切换宽松/严格模式：{mode: 'permissive'|'strict'}"""
+        """切换宽松/严格模式：{mode: 'permissive'|'strict'}
+        切严格模式时自动放行面板端口，防止面板自身被锁死"""
         token = self._require_auth()
         if token is None:
             return
@@ -855,12 +859,24 @@ class PanelHandler(BaseHTTPRequestHandler):
         if mode not in ("permissive", "strict"):
             self._send(400, {"error": "mode 必须是 permissive 或 strict"})
             return
+        store = self.server.store
+        if mode == "strict":
+            # 严格模式：确保面板端口已放行（防锁死）
+            panel_port = int(self.server.config.get("port", DEFAULT_PORT))
+            exists = any(r.get("type") == "port_allow" and r.get("port") == panel_port
+                         and r.get("comment") == PANEL_PORT_COMMENT for r in store.rules)
+            if not exists:
+                store.add({"type": "port_allow", "proto": "tcp", "port": panel_port,
+                           "comment": PANEL_PORT_COMMENT})
         self.server.config.set("mode", mode)
         ok, msg = self.server.nft.apply()
         if not ok:
             self._send(500, {"error": msg})
             return
-        self._send(200, {"ok": True, "msg": msg})
+        extra = ""
+        if mode == "strict":
+            extra = f"（已自动放行面板端口 {panel_port}，防止面板被锁死）"
+        self._send(200, {"ok": True, "msg": f"模式已切换为 {'严格' if mode == 'strict' else '宽松'}{extra}"})
 
     def _api_password(self):
         """修改密码：{old_password, new_password}"""
