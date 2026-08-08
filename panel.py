@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.15.1"
+CURRENT_VERSION = "1.16.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1203,6 +1203,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_panel_port()
         elif path == "/api/bruteforce":
             self._api_bruteforce_set()
+        elif path == "/api/bruteforce/ban":
+            self._api_bruteforce_ban()
+        elif path == "/api/bruteforce/unban":
+            self._api_bruteforce_unban()
         elif path.startswith("/api/bruteforce/"):
             self._api_bruteforce_unban(path.rsplit("/", 1)[1])
         elif path == "/api/firewall":
@@ -1430,6 +1434,56 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         self.server.config.set("username", name)
         self._send(200, {"ok": True, "msg": f"登录用户名已修改为 {name}，下次登录请用新用户名"})
+
+    def _api_bruteforce_ban(self):
+        """手动封禁 IP：{ip} → 添加拒绝规则"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        ip = str(data.get("ip", "")).strip()
+        if not is_valid_ip_or_net(ip) or "/" in ip or "-" in ip:
+            self._send(400, {"error": "请输入单个 IP 地址（IPv4/IPv6）"})
+            return
+        store = self.server.store
+        if any(r.get("type") == "ip_deny" and r.get("ip") == ip for r in store.rules):
+            self._send(400, {"error": f"{ip} 已在封禁列表"})
+            return
+        store.add({"type": "ip_deny", "ip": ip, "comment": "手动封禁"})
+        ok, msg = self.server.nft.apply()
+        if not ok:
+            self._send(500, {"error": msg})
+            return
+        self._send(200, {"ok": True, "msg": f"已封禁 {ip}"})
+
+    def _api_bruteforce_unban(self, ip=None):
+        """手动解封 IP：{ip} → 删除该 IP 的全部拒绝规则与封禁记录"""
+        token = self._require_auth()
+        if token is None:
+            return
+        if ip is None:
+            data = self._read_json()
+            ip = str(data.get("ip", "")).strip()
+        if not ip:
+            self._send(400, {"error": "请输入 IP 地址"})
+            return
+        store = self.server.store
+        before = len(store.rules)
+        store.rules = [r for r in store.rules
+                       if not (r.get("type") == "ip_deny" and r.get("ip") == ip)]
+        removed = len(store.rules) < before
+        bans = load_bans()
+        if ip in bans:
+            del bans[ip]
+            save_bans(bans)
+        if removed:
+            store.save()
+            ok, msg = self.server.nft.apply()
+            if not ok:
+                self._send(500, {"error": msg})
+                return
+        self._send(200, {"ok": True,
+                         "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
 
     def _api_bruteforce(self):
         """查询防爆破配置与当前封禁列表"""

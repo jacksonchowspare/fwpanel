@@ -822,6 +822,35 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(code, 400)
         self._req("DELETE", f"/api/rules/{rid}", token=token)
 
+    def test_bruteforce_manual_ban(self):
+        """手动封禁/解封 IP API"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 手动封禁
+        code, d = self._req("POST", "/api/bruteforce/ban",
+                            {"ip": "198.51.100.77"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.77"
+                            for r in d["rules"]), "应存在封禁规则")
+        # 重复封禁拒绝
+        code, d = self._req("POST", "/api/bruteforce/ban",
+                            {"ip": "198.51.100.77"}, token=token)
+        self.assertEqual(code, 400)
+        # 非法 IP
+        code, d = self._req("POST", "/api/bruteforce/ban",
+                            {"ip": "1.2.3.0/24"}, token=token)
+        self.assertEqual(code, 400)
+        # 手动解封
+        code, d = self._req("POST", "/api/bruteforce/unban",
+                            {"ip": "198.51.100.77"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertFalse(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.77"
+                             for r in d["rules"]), "解封后不应有封禁规则")
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

@@ -192,6 +192,14 @@ tr:hover td { background: #1d2733; }
             <input id="bf_seconds" style="width:70px" inputmode="numeric">
             <button class="btn" onclick="saveBf()">保存</button>
           </div>
+          <div class="form-row">
+            <span style="align-self:center">手动封禁 IP</span>
+            <input id="bf_ban_ip" placeholder="IP 地址" style="width:130px">
+            <button class="btn" onclick="banIp()">封禁</button>
+            <span style="align-self:center;margin-left:10px">手动解封</span>
+            <input id="bf_unban_ip" placeholder="IP 地址" style="width:130px">
+            <button class="btn ghost" onclick="unbanIp()">解封</button>
+          </div>
           <div id="bf_list" style="color:var(--muted);font-size:12px;line-height:2">当前无封禁 IP</div>
         </div>
       </div>
@@ -515,6 +523,26 @@ async function loadBf() {
       `<button class="btn mini danger" onclick="unban('${b.ip}')">解封</button><br>`).join("");
   } catch (e) { /* 静默 */ }
 }
+async function banIp() {
+  const ip = $("bf_ban_ip").value.trim();
+  if (!ip) { toast("请输入 IP 地址", "err"); return; }
+  confirmPanel(`确认封禁 ${ip}？\n\n将添加拒绝规则，该 IP 无法访问服务器任何端口。`, () => {
+    api("POST", "/api/bruteforce/ban", { ip }).then(d => {
+      toast(d.msg || "已封禁", "okk"); $("bf_ban_ip").value = "";
+      loadBf(); renderRules();
+    }).catch(e => toast(e.message, "err"));
+  }, "🚫 手动封禁");
+}
+async function unbanIp() {
+  const ip = $("bf_unban_ip").value.trim();
+  if (!ip) { toast("请输入 IP 地址", "err"); return; }
+  confirmPanel(`确认解封 ${ip}？\n\n将删除该 IP 的全部拒绝规则与封禁记录。`, () => {
+    api("POST", "/api/bruteforce/unban", { ip }).then(d => {
+      toast(d.msg || "已解封", "okk"); $("bf_unban_ip").value = "";
+      loadBf(); renderRules();
+    }).catch(e => toast(e.message, "err"));
+  }, "🔓 手动解封");
+}
 async function saveBf() {
   try {
     const d = await api("POST", "/api/bruteforce", {
@@ -765,10 +793,25 @@ async function saveCmt() {
 }
 async function addRule() {
   const body = { type: $("r_type").value, comment: $("r_comment").value };
-  if (body.type.startsWith("port")) { body.proto = $("r_proto").value; body.port = $("r_port").value; }
-  else body.ip = $("r_ip").value;
-  try { await api("POST", "/api/rules", body); toast("规则已添加并生效", "okk"); $("r_port").value = ""; $("r_ip").value = ""; $("r_comment").value = ""; refreshAll(); }
-  catch (e) { toast(e.message, "err"); }
+  const typeName = { port_allow: "放行端口", port_deny: "拒绝端口", ip_allow: "放行 IP", ip_deny: "拒绝 IP" }[body.type] || body.type;
+  let detail;
+  if (body.type.startsWith("port")) {
+    body.proto = $("r_proto").value; body.port = $("r_port").value;
+    if (!body.port || !/^\d+$/.test(body.port)) { toast("请输入有效端口", "err"); return; }
+    detail = `${typeName}：${body.proto.toUpperCase()} ${body.port}`;
+  } else {
+    body.ip = $("r_ip").value;
+    if (!body.ip) { toast("请输入 IP", "err"); return; }
+    detail = `${typeName}：${body.ip}`;
+  }
+  if (body.comment) detail += `\n备注：${body.comment}`;
+  confirmPanel(`确认添加规则？\n\n${detail}`, () => {
+    api("POST", "/api/rules", body).then(d => {
+      toast(d.msg || "规则已添加并生效", "okk");
+      $("r_port").value = ""; $("r_ip").value = ""; $("r_comment").value = "";
+      refreshAll();
+    }).catch(e => toast(e.message, "err"));
+  }, "➕ 添加规则确认");
 }
 
 /* ---------- 一键开放端口 ---------- */
@@ -776,12 +819,14 @@ async function quickOpen() {
   const port = $("qp_port").value.trim();
   if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
   const proto = $("qp_proto").value;
-  try {
-    const d = await api("POST", "/api/open-port", { port, proto });
-    toast(d.msg || `端口 ${port} 已开放`, "okk");
-    $("qp_port").value = "";
-    refreshAll();
-  } catch (e) { toast(e.message, "err"); }
+  const protoName = { tcp: "TCP", udp: "UDP", both: "TCP+UDP" }[proto] || proto;
+  confirmPanel(`确认放行端口 ${port}/${protoName}？\n\n将立即添加防火墙放行规则并生效。`, () => {
+    api("POST", "/api/open-port", { port, proto }).then(d => {
+      toast(d.msg || `端口 ${port} 已开放`, "okk");
+      $("qp_port").value = "";
+      refreshAll();
+    }).catch(e => toast(e.message, "err"));
+  }, "⚡ 开放端口确认");
 }
 async function delRule(id) {
   if (!confirm("确认删除该规则？")) return;
