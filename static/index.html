@@ -182,14 +182,14 @@ tr:hover td { background: #1d2733; }
             <input id="qp_port" placeholder="端口 (1-65535)" style="width:130px" inputmode="numeric">
             <select id="qp_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
             <button class="btn" onclick="quickOpen()">一键开放</button>
-            <span style="color:var(--muted);font-size:12px;align-self:center">立即添加放行规则并生效，重复开放不会报错</span>
           </div>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:10px">立即添加放行规则并生效，重复开放不会报错</div>
           <div class="form-row" style="margin-bottom:0">
             <input id="qp_port_del" placeholder="端口 (1-65535)" style="width:130px" inputmode="numeric">
             <select id="qp_proto_del"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
             <button class="btn danger" onclick="quickClose()">一键删除</button>
-            <span style="color:var(--muted);font-size:12px;align-self:center">删除该端口对应协议的放行规则（TCP 会连 TCP+UDP 一起删）</span>
           </div>
+          <div style="color:var(--muted);font-size:12px">删除该端口对应协议的放行规则（TCP 会连 TCP+UDP 一起删）</div>
         </div>
       </div>
 
