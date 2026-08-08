@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.13.3"
+CURRENT_VERSION = "1.14.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -78,9 +78,6 @@ SERVICES = {
     "http":  ("tcp", 80),
     "https": ("tcp", 443),
     "dns":   ("udp", 53),
-    "mail":  ("tcp", 25),
-    "imap":  ("tcp", 143),
-    "smtps": ("tcp", 465),
 }
 
 VALID_PROTOS = ("tcp", "udp", "both")

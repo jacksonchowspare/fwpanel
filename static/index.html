@@ -60,6 +60,7 @@ tr:hover td { background: #1d2733; }
 .svc { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed var(--border); }
 .svc:last-child { border-bottom: 0; }
 .svc .name { font-weight: 500; } .svc .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.svc .cs-port { width: 72px; padding: 4px 8px; font-size: 12px; margin-left: 8px; }
 .empty { color: var(--muted); text-align: center; padding: 24px; }
 #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #232e3b; border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; font-size: 13px; }
 #toast.err { border-color: var(--danger); color: var(--danger); }
@@ -542,7 +543,15 @@ async function doUpgrade() {
 }
 
 /* ---------- 服务开关 ---------- */
-const SVCS = [["ssh", null, "tcp"], ["http", 80, "tcp"], ["https", 443, "tcp"], ["dns", 53, "udp"], ["mail", 25, "tcp"], ["imap", 143, "tcp"], ["smtps", 465, "tcp"]];
+const SVCS = [["ssh", null, "tcp"], ["http", 80, "tcp"], ["https", 443, "tcp"], ["dns", 53, "udp"]];
+// 自定义端口服务：名称 -> 显示名（端口由用户填写）
+const CUSTOM_SVCS = [["x3ui", "3X-UI"], ["reality", "Reality"], ["socks5", "Socks5"]];
+function customSvcPort(name) { return parseInt($("cs_port_" + name).value, 10); }
+function csPortChanged(name) {
+  const p = customSvcPort(name);
+  const sw = $("cs_sw_" + name);
+  if (sw) sw.disabled = !(p >= 1 && p <= 65535);
+}
 async function renderSvc() {
   const rules = (await api("GET", "/api/rules")).rules;
   const sshPort = (status && status.ssh_port) || 22;
@@ -555,10 +564,34 @@ async function renderSvc() {
       <label class="switch"><input type="checkbox" ${on ? "checked" : ""} onchange="toggleSvc('${name}', this.checked)"><span class="slider"></span></label>`;
     list.appendChild(row);
   }
+  for (const [name, label] of CUSTOM_SVCS) {
+    const p = customSvcPort(name);
+    const on = p ? rules.some(r => r.type === "port_allow" && r.port == p) : false;
+    const row = document.createElement("div"); row.className = "svc";
+    row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="${p || ""}" oninput="csPortChanged('${name}')"></span>
+      <label class="switch"><input type="checkbox" id="cs_sw_${name}" ${on ? "checked" : ""} ${(p >= 1 && p <= 65535) ? "" : "disabled"} onchange="toggleCustomSvc('${name}', this.checked)"><span class="slider"></span></label>`;
+    list.appendChild(row);
+  }
 }
 async function toggleSvc(name, on) {
   try { await api("POST", "/api/service", { name, enabled: on }); toast(`服务 ${name} 已${on ? "放行" : "拒绝"}`, "okk"); refreshAll(); }
   catch (e) { toast(e.message, "err"); refreshAll(); }
+}
+async function toggleCustomSvc(name, on) {
+  const p = customSvcPort(name);
+  if (!(p >= 1 && p <= 65535)) { toast("请先填写有效端口（1-65535）", "err"); renderSvc(); return; }
+  try {
+    if (on) {
+      const d = await api("POST", "/api/open-port", { port: p, proto: "tcp" });
+      toast(d.msg || `${name} 端口 ${p} 已放行`, "okk");
+    } else {
+      const rules = (await api("GET", "/api/rules")).rules;
+      const r = rules.find(x => x.type === "port_allow" && x.port == p && !x.protected);
+      if (r) await api("DELETE", "/api/rules/" + r.id);
+      toast(`${name} 端口 ${p} 已收回`, "okk");
+    }
+    renderSvc();
+  } catch (e) { toast(e.message, "err"); renderSvc(); }
 }
 
 /* ---------- 模式 ---------- */
