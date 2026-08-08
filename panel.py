@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.18.3"
+CURRENT_VERSION = "1.18.4"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1116,13 +1116,34 @@ def bbr_status():
         return False
 
 
-def bbr_available():
-    """内核是否支持 BBR"""
+def bbr_module_exists():
+    """内核是否带有 bbr 模块文件（Debian 等发行版 bbr 为模块化编译）"""
     try:
-        with open("/proc/sys/net/ipv4/tcp_available_congestion_control") as f:
-            return "bbr" in f.read()
+        rel = os.uname().release
+        for ext in ("ko", "ko.xz", "ko.zst", "ko.gz"):
+            if os.path.exists(f"/lib/modules/{rel}/kernel/net/ipv4/tcp_bbr.{ext}"):
+                return True
+        return False
     except Exception:
         return False
+
+
+def bbr_available():
+    """内核是否支持 BBR（含模块化：已加载/可加载/模块文件存在）"""
+    try:
+        with open("/proc/sys/net/ipv4/tcp_available_congestion_control") as f:
+            if "bbr" in f.read():
+                return True
+    except Exception:
+        pass
+    # 尝试加载模块（Debian 系 bbr 是 tcp_bbr.ko，设置时本可自动加载，这里主动探测）
+    try:
+        r = subprocess.run(["modprobe", "tcp_bbr"], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return True
+    except Exception:
+        pass
+    return bbr_module_exists()
 
 
 def enable_bbr():
