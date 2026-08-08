@@ -617,7 +617,7 @@ class TestAPI(unittest.TestCase):
 
     def test_status_includes_distro(self):
         code, d = self._req("POST", "/api/login",
-                            {"username": TEST_USER, "password": TEST_PASS})
+                            {"username": TEST_USER, "password": "NewPass123"})
         self.assertEqual(code, 200)
         token = d["token"]
         code, d = self._req("GET", "/api/status", token=token)
