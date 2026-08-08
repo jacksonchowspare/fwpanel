@@ -104,6 +104,22 @@ tr:hover td { background: #1d2733; }
     </div>
 
     <div class="panel">
+      <h2>⚙️ 面板设置</h2>
+      <div class="form-row">
+        <span style="align-self:center">面板端口</span>
+        <input id="panel_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
+        <button class="btn" onclick="setPanelPort()">修改端口</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">修改后服务重启，需用新端口访问（旧端口同时失效）</span>
+      </div>
+      <div class="form-row">
+        <span style="align-self:center">登录用户名</span>
+        <input id="username_input" placeholder="用户名" style="width:130px">
+        <button class="btn" onclick="setUsername()">修改用户名</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">下次登录生效（3-32 位字母数字）</span>
+      </div>
+    </div>
+
+    <div class="panel">
       <h2>🔄 系统更新</h2>
       <div class="form-row">
         <span style="align-self:center">当前版本 <b id="cur_ver">-</b> ｜ 最新版本 <b id="latest_ver">-</b></span>
@@ -238,9 +254,31 @@ async function refreshAll() {
     $("st_rules").textContent = status.rule_count;
     $("st_ssh").textContent = status.ssh_port;
     $("st_ver").textContent = "v" + status.version;
+    $("panel_port_input").value = status.panel_port || "";
+    $("username_input").value = status.username || "";
     $("mode_sel").value = status.mode;
     renderSvc(); renderRules(); loadSsh();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+/* ---------- 面板设置 ---------- */
+async function setPanelPort() {
+  const port = $("panel_port_input").value.trim();
+  if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
+  if (!confirm(`确认将面板端口修改为 ${port}？\n\n修改后服务将重启，当前页面会断开，请用新端口访问：\nhttp://<服务器IP>:${port}\n\n严格模式下面板端口放行规则会自动迁移。`)) return;
+  try {
+    const d = await api("POST", "/api/panel/port", { port });
+    toast(d.msg || "面板端口已修改", "okk");
+    setTimeout(() => { location.reload(); }, 4000);
+  } catch (e) { toast("修改失败: " + e.message, "err"); }
+}
+async function setUsername() {
+  const name = $("username_input").value.trim();
+  if (!name) { toast("请输入用户名", "err"); return; }
+  try {
+    const d = await api("POST", "/api/username", { username: name });
+    toast(d.msg || "用户名已修改", "okk");
+  } catch (e) { toast(e.message, "err"); }
 }
 
 /* ---------- SSH 端口管理 ---------- */

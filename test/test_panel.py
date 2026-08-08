@@ -283,6 +283,70 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("POST", "/api/mode", {"mode": "permissive"}, token=token)
         self.assertEqual(code, 200)
 
+    def test_panel_port(self):
+        """修改面板端口：配置更新 + 严格模式规则迁移"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 预置一条严格模式遗留的面板端口规则（port=17999）
+        self.store.add({"type": "port_allow", "proto": "tcp", "port": 17999,
+                        "comment": panel.PANEL_PORT_COMMENT})
+        # mock 重启动作（只 mock restart_service，不碰 subprocess.run，避免影响 status 等接口）
+        real_timer, real_restart = panel.threading.Timer, panel.restart_service
+        class FakeTimer:
+            def __init__(self, delay, fn):
+                self.fn = fn
+            def start(self):
+                pass
+        panel.threading.Timer = FakeTimer
+        panel.restart_service = lambda: None
+        try:
+            # 改端口
+            code, d = self._req("POST", "/api/panel/port", {"port": 18001}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertIn("18001", d["msg"])
+            # 配置已更新
+            code, d = self._req("GET", "/api/status", token=token)
+            self.assertEqual(d["panel_port"], 18001)
+            # 防火墙规则已迁移到新端口
+            code, d = self._req("GET", "/api/rules", token=token)
+            migrated = [r for r in d["rules"] if r.get("comment") == panel.PANEL_PORT_COMMENT]
+            self.assertEqual(len(migrated), 1)
+            self.assertEqual(migrated[0]["port"], 18001)
+            # 占用端口拒绝
+            code, d = self._req("POST", "/api/panel/port", {"port": 17999}, token=token)
+            self.assertEqual(code, 400)
+            # 非法端口
+            code, d = self._req("POST", "/api/panel/port", {"port": "abc"}, token=token)
+            self.assertEqual(code, 400)
+        finally:
+            panel.threading.Timer = real_timer
+            panel.restart_service = real_restart
+            # 恢复配置和规则
+            self.server.config.set("port", 17999)
+            code, d = self._req("GET", "/api/rules", token=token)
+            for r in d["rules"]:
+                if r.get("comment") == panel.PANEL_PORT_COMMENT:
+                    self._req("DELETE", f"/api/rules/{r['id']}", token=token)
+
+    def test_username(self):
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 修改用户名
+        code, d = self._req("POST", "/api/username", {"username": "newadmin"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/status", token=token)
+        self.assertEqual(d["username"], "newadmin")
+        # 非法用户名
+        code, d = self._req("POST", "/api/username", {"username": "a!"}, token=token)
+        self.assertEqual(code, 400)
+        # 恢复
+        code, d = self._req("POST", "/api/username", {"username": TEST_USER}, token=token)
+        self.assertEqual(code, 200)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -379,13 +443,13 @@ class TestUpgrade(unittest.TestCase):
             def start(self):
                 pass
         panel.threading.Timer = FakeTimer
-        self.real_run = panel.subprocess.run
-        panel.subprocess.run = lambda *a, **k: None
+        self.real_restart = panel.restart_service
+        panel.restart_service = lambda: None
 
     def tearDown(self):
         panel.APP_DIR = self.old_app_dir
         panel.threading.Timer = self.real_timer
-        panel.subprocess.run = self.real_run
+        panel.restart_service = self.real_restart
         shutil.rmtree(self.app_tmp, ignore_errors=True)
 
     def _make_new_files(self, version="9.9.9", broken=False):

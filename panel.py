@@ -44,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.3.1"
+CURRENT_VERSION = "1.4.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -342,6 +342,24 @@ class Auth:
 
 # ------------------------------- 升级功能 -------------------------------
 
+def restart_service():
+    """重启 fwpanel 服务（由修改端口/升级等操作延迟调用）"""
+    subprocess.run(["systemctl", "restart", "fwpanel"], capture_output=True)
+
+
+def port_in_use_py(port):
+    """Python 侧端口占用检测（bind 测试）"""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("0.0.0.0", port))
+        return False
+    except OSError:
+        return True
+    finally:
+        s.close()
+
+
 def http_get_json(url, timeout=8):
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
@@ -455,8 +473,7 @@ def perform_upgrade():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     # 延迟重启，确保响应先送达浏览器
-    threading.Timer(1.5, lambda: subprocess.run(
-        ["systemctl", "restart", "fwpanel"], capture_output=True)).start()
+    threading.Timer(1.5, restart_service).start()
     return True, f"已升级到 v{latest}，服务重启中，请稍候重新登录"
 
 
@@ -583,6 +600,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_ssh_apply()
         elif path == "/api/ssh":
             self._api_ssh_set()
+        elif path == "/api/panel/port":
+            self._api_panel_port()
+        elif path == "/api/username":
+            self._api_username()
         else:
             self._send(404, {"error": "Not Found"})
 
@@ -631,6 +652,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             "loaded": nft.status(),
             "rule_count": len(self.server.store.rules),
             "version": CURRENT_VERSION,
+            "panel_port": int(cfg.get("port", DEFAULT_PORT)),
+            "username": cfg.get("username", ""),
         })
 
     def _api_upgrade_check(self):
@@ -727,6 +750,59 @@ class PanelHandler(BaseHTTPRequestHandler):
             hint = (f"。旧端口 {old} 已临时放行（规则备注「{SSH_OLD_PORT_COMMENT}」），"
                     f"确认新端口 {port} 可登录后，请在规则列表删除该临时规则")
         self._send(200, {"ok": True, "msg": smsg + hint})
+
+    def _api_panel_port(self):
+        """修改面板端口：更新配置 + 同步防火墙规则 + 重启服务"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        try:
+            port = int(data.get("port", 0))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "端口必须是数字"})
+            return
+        if not (1 <= port <= 65535):
+            self._send(400, {"error": "端口范围 1-65535"})
+            return
+        old = int(self.server.config.get("port", DEFAULT_PORT))
+        if port == old:
+            self._send(200, {"ok": True, "msg": f"面板端口已是 {port}"})
+            return
+        if port_in_use_py(port):
+            self._send(400, {"error": f"端口 {port} 已被占用，请换一个"})
+            return
+        # 更新配置
+        self.server.config.set("port", port)
+        # 同步防火墙规则：严格模式下遗留的面板端口放行规则迁移到新端口
+        store = self.server.store
+        changed = False
+        for r in store.rules:
+            if (r.get("type") == "port_allow" and r.get("comment") == PANEL_PORT_COMMENT
+                    and r.get("port") == old):
+                r["port"] = port
+                changed = True
+        if changed:
+            store.save()
+        self.server.nft.apply()
+        # 延迟重启，响应先送达
+        threading.Timer(1.5, restart_service).start()
+        self._send(200, {"ok": True, "msg": f"面板端口已修改为 {port}，服务重启中，"
+                                            f"请用 http://<服务器IP>:{port} 访问"})
+
+    def _api_username(self):
+        """修改面板登录用户名"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        name = str(data.get("username", "")).strip()
+        import re
+        if not re.match(r"^[A-Za-z0-9_]{3,32}$", name):
+            self._send(400, {"error": "用户名需为 3-32 位字母、数字或下划线"})
+            return
+        self.server.config.set("username", name)
+        self._send(200, {"ok": True, "msg": f"登录用户名已修改为 {name}，下次登录请用新用户名"})
 
     def _api_list_rules(self):
         token = self._require_auth()
