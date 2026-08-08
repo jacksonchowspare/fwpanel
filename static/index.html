@@ -24,10 +24,13 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 .card .v { font-size: 18px; font-weight: 600; margin-top: 4px; }
 .card .v.ok { color: var(--accent2); } .card .v.off { color: var(--danger); }
 .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; margin-bottom: 20px; }
 .grid2 .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .grid2 .panel { margin-bottom: 0; }
 @media (max-width: 1080px) { .grid2 { grid-template-columns: 1fr; } }
+/* 添加规则表单：等分布局占满全宽，IP 输入框弹性伸展 */
+#add_rule_row { display: grid; grid-template-columns: 150px 100px 130px 1fr 170px auto; gap: 8px; align-items: center; }
+@media (max-width: 1080px) { #add_rule_row { grid-template-columns: 1fr 1fr; } }
 .panel h2 { font-size: 15px; margin-bottom: 12px; }
 .btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
 .btn:hover { opacity: .88; }
@@ -191,7 +194,7 @@ tr:hover td { background: #1d2733; }
 
     <div class="panel">
       <h2>添加规则</h2>
-      <div class="form-row">
+      <div class="form-row" id="add_rule_row">
         <select id="r_type">
           <option value="port_allow">放行端口</option>
           <option value="port_deny">拒绝端口</option>
@@ -199,9 +202,9 @@ tr:hover td { background: #1d2733; }
           <option value="ip_deny">拒绝 IP</option>
         </select>
         <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select>
-        <input id="r_port" placeholder="端口 (1-65535)" style="width:130px">
-        <input id="r_ip" placeholder="IP/IP段/IP范围（1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50）" style="width:280px">
-        <input id="r_comment" placeholder="备注（可选）" style="width:180px">
+        <input id="r_port" placeholder="端口 (1-65535)" inputmode="numeric" style="width:100%">
+        <input id="r_ip" placeholder="IP/IP段/IP范围（如 1.2.3.4 / 1.2.3.0/24 / 1.2.3.1-1.2.3.50）" style="width:100%">
+        <input id="r_comment" placeholder="备注（可选）" style="width:100%">
         <button class="btn" onclick="addRule()">添加</button>
       </div>
     </div>
