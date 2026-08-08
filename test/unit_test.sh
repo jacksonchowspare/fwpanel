@@ -57,7 +57,8 @@ else
 fi
 
 echo "== gen_initial_rules 生成 SSH+面板端口放行 =="
-RULES_TMP="$(mktemp)"
+RULES_TMP="$(mktemp -u)"
+rm -f "$RULES_TMP"
 gen_initial_rules 2222 17890 "$RULES_TMP"
 python3 - "$RULES_TMP" <<'PYEOF'
 import json, sys
