@@ -46,7 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.6.2"
+CURRENT_VERSION = "1.7.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -231,12 +231,19 @@ class RuleStore:
         lines.append('        iifname "lo" accept')
         lines.append("        ip protocol icmp accept")
         lines.append("        ip6 nexthdr icmpv6 accept")
+        # ⚠ 黑名单规则优先：拒绝类规则（ip_deny/port_deny）必须放在所有 accept 之前，
+        #   否则 SSH 保护等 accept 规则会先命中，封禁对 SSH 端口失效
+        for r in self.rules:
+            if r.get("type") in ("ip_deny", "port_deny"):
+                for line in self._render_one(r):
+                    lines.append(line)
         # SSH 保护规则（永远存在，防锁死）
         lines.append(f"        tcp dport {ssh_port} accept   # SSH 保护(不可删除)")
-        # 用户规则
+        # 用户规则（放行/拒绝之外的部分）
         for r in self.rules:
-            for line in self._render_one(r):
-                lines.append(line)
+            if r.get("type") not in ("ip_deny", "port_deny"):
+                for line in self._render_one(r):
+                    lines.append(line)
         lines.append("    }")
         lines.append("}")
         return "\n".join(lines) + "\n"
@@ -615,6 +622,130 @@ def apply_sshd_port(port):
         return False, f"修改失败: {e}"
 
 
+# ------------------------------- SSH 防爆破 -------------------------------
+
+BANS_FILE = os.path.join(BASE_DIR, "bans.json")
+BAN_COMMENT = "SSH防爆破-自动封禁"
+BF_DEFAULTS = {"enabled": False, "max_fails": 5, "ban_seconds": 3600, "fail_window": 300}
+
+
+def bf_cfg(config):
+    """读取防爆破配置（合并默认值）"""
+    bf = config.get("bruteforce")
+    if not isinstance(bf, dict):
+        bf = {}
+    return {k: bf.get(k, v) for k, v in BF_DEFAULTS.items()}
+
+
+def load_bans():
+    try:
+        with open(BANS_FILE) as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_bans(bans):
+    try:
+        os.makedirs(BASE_DIR, exist_ok=True)
+        tmp = BANS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(bans, f, ensure_ascii=False)
+        os.replace(tmp, BANS_FILE)
+    except Exception:
+        pass
+
+
+def get_failed_ssh_attempts(window_seconds):
+    """从 journal 读取最近窗口内的 SSH 认证失败记录，返回 {ip: 次数}"""
+    svc = ssh_service_name()
+    try:
+        r = subprocess.run(["journalctl", "-u", svc, "--since", f"-{int(window_seconds)}s",
+                            "-o", "cat", "--no-pager"],
+                           capture_output=True, text=True, timeout=10)
+    except Exception:
+        return {}
+    counts = {}
+    pat = re.compile(r"Failed password for .*? from ([0-9a-fA-F:.]+) port")
+    for line in r.stdout.splitlines():
+        m = pat.search(line)
+        if m:
+            ip = m.group(1)
+            counts[ip] = counts.get(ip, 0) + 1
+    return counts
+
+
+def get_established_ips(port):
+    """端口上已建立连接的远端 IP 集合（豁免封禁，防把自己锁死）"""
+    ips = set()
+    try:
+        r = subprocess.run(["ss", "-tn", "state", "established", f"( sport = :{port} )"],
+                           capture_output=True, text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 5:
+                remote = parts[4]
+                ip = remote.rsplit(":", 1)[0].strip("[]")
+                if ip and ip != "*":
+                    ips.add(ip)
+    except Exception:
+        pass
+    return ips
+
+
+def bruteforce_cycle(config, store, now=None):
+    """执行一轮防爆破扫描：解封到期 IP + 检测并封禁新 IP。返回动作日志列表"""
+    logs = []
+    bf = bf_cfg(config)
+    if not bf["enabled"]:
+        return logs
+    now = time.time() if now is None else now
+    bans = load_bans()
+    changed = False
+    # 1) 到期解封
+    expired = [ip for ip, until in bans.items() if until <= now]
+    for ip in expired:
+        store.rules = [r for r in store.rules
+                       if not (r.get("type") == "ip_deny" and r.get("ip") == ip
+                               and r.get("comment") == BAN_COMMENT)]
+        del bans[ip]
+        changed = True
+        logs.append(f"SSH 防爆破: {ip} 封禁到期，已自动解封")
+    # 2) 检测新失败并封禁
+    exempt = get_established_ips(int(config.get("ssh_port", SSH_PORT_DEFAULT)))
+    exempt.add("127.0.0.1")
+    exempt.add("::1")
+    counts = get_failed_ssh_attempts(bf["fail_window"])
+    for ip, n in counts.items():
+        if ip in exempt or ip in bans:
+            continue
+        if n >= bf["max_fails"]:
+            if not any(r.get("type") == "ip_deny" and r.get("ip") == ip
+                       and r.get("comment") == BAN_COMMENT for r in store.rules):
+                store.add({"type": "ip_deny", "ip": ip, "comment": BAN_COMMENT})
+            bans[ip] = now + bf["ban_seconds"]
+            changed = True
+            logs.append(f"SSH 防爆破: {ip} 失败 {n} 次，已封禁 {bf['ban_seconds']} 秒")
+    if changed:
+        store.save()
+        save_bans(bans)
+        nft = NFTManager(store, config)
+        nft.apply()
+    return logs
+
+
+def bruteforce_loop(config, store, interval=30):
+    """后台监控线程：每 interval 秒执行一轮防爆破扫描"""
+    while True:
+        try:
+            for msg in bruteforce_cycle(config, store):
+                log(msg)
+        except Exception as e:
+            log(f"SSH 防爆破扫描异常: {e}")
+        time.sleep(interval)
+
+
 # ------------------------------- HTTP 服务 -------------------------------
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -703,6 +834,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_ssh_set()
         elif path == "/api/panel/port":
             self._api_panel_port()
+        elif path == "/api/bruteforce":
+            self._api_bruteforce_set()
+        elif path.startswith("/api/bruteforce/"):
+            self._api_bruteforce_unban(path.rsplit("/", 1)[1])
         elif path == "/api/username":
             self._api_username()
         else:
@@ -907,6 +1042,67 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         self.server.config.set("username", name)
         self._send(200, {"ok": True, "msg": f"登录用户名已修改为 {name}，下次登录请用新用户名"})
+
+    def _api_bruteforce(self):
+        """查询防爆破配置与当前封禁列表"""
+        token = self._require_auth()
+        if token is None:
+            return
+        bf = bf_cfg(self.server.config)
+        bans = load_bans()
+        now = time.time()
+        items = [{"ip": ip, "until": int(u), "remaining": max(0, int(u - now))}
+                 for ip, u in sorted(bans.items())]
+        self._send(200, {
+            "enabled": bool(bf["enabled"]),
+            "max_fails": bf["max_fails"],
+            "ban_seconds": bf["ban_seconds"],
+            "fail_window": bf["fail_window"],
+            "bans": items,
+        })
+
+    def _api_bruteforce_set(self):
+        """更新防爆破配置：{enabled?, max_fails?, ban_seconds?, fail_window?}"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        bf = bf_cfg(self.server.config)
+        if "enabled" in data:
+            bf["enabled"] = bool(data["enabled"])
+        for key, lo, hi in (("max_fails", 1, 100), ("ban_seconds", 60, 604800),
+                            ("fail_window", 60, 86400)):
+            if key in data:
+                try:
+                    v = int(data[key])
+                except (TypeError, ValueError):
+                    self._send(400, {"error": f"{key} 必须是数字"})
+                    return
+                if not (lo <= v <= hi):
+                    self._send(400, {"error": f"{key} 范围 {lo}-{hi}"})
+                    return
+                bf[key] = v
+        self.server.config.set("bruteforce", bf)
+        state = "已启用" if bf["enabled"] else "已停用"
+        self._send(200, {"ok": True, "msg": f"SSH 防爆破{state}（失败 {bf['max_fails']} 次封禁 {bf['ban_seconds']} 秒）"})
+
+    def _api_bruteforce_unban(self, ip):
+        """手动解封 IP"""
+        token = self._require_auth()
+        if token is None:
+            return
+        store = self.server.store
+        store.rules = [r for r in store.rules
+                       if not (r.get("type") == "ip_deny" and r.get("ip") == ip
+                               and r.get("comment") == BAN_COMMENT)]
+        bans = load_bans()
+        removed = ip in bans
+        if removed:
+            del bans[ip]
+            save_bans(bans)
+        store.save()
+        self.server.nft.apply()
+        self._send(200, {"ok": True, "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
 
     def _api_list_rules(self):
         token = self._require_auth()
@@ -1194,6 +1390,9 @@ def main():
     nft = NFTManager(store, config)
     auth = Auth(config)
     server = PanelServer((bind, port), PanelHandler, config, store, nft, auth)
+    # SSH 防爆破后台监控（配置启用后生效）
+    threading.Thread(target=bruteforce_loop, args=(config, store), daemon=True).start()
+    log("SSH 防爆破监控线程已启动")
 
     # 启动时应用一次规则（保证面板规则生效）
     ok, msg = nft.apply()

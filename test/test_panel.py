@@ -128,6 +128,18 @@ class TestRules(unittest.TestCase):
         self.assertIn("ip saddr 10.0.0.0/8 accept", text)
         self.assertIn("封禁段", text)
 
+    def test_deny_before_ssh_accept(self):
+        """黑名单规则必须排在 SSH 保护 accept 之前（否则封禁对 SSH 失效）"""
+        self.store.rules = [
+            {"id": "1", "type": "port_allow", "proto": "tcp", "port": 8080, "comment": ""},
+            {"id": "2", "type": "ip_deny", "ip": "1.2.3.4", "comment": "封禁"},
+            {"id": "3", "type": "port_deny", "proto": "tcp", "port": 9999, "comment": ""},
+        ]
+        text = self.store.render(self.cfg)
+        self.assertLess(text.index("ip saddr 1.2.3.4 drop"), text.index("tcp dport 22 accept"))
+        self.assertLess(text.index("tcp dport 9999 drop"), text.index("tcp dport 22 accept"))
+        self.assertGreater(text.index("tcp dport 8080 accept"), text.index("tcp dport 22 accept"))
+
     def test_protected_rule_not_deletable(self):
         self.store.rules = [{"id": "x1", "type": "port_allow", "proto": "tcp",
                              "port": 22, "comment": "SSH 保护(不可删除)", "protected": True}]
@@ -569,6 +581,34 @@ class TestAPI(unittest.TestCase):
             if r.get("ip") == "198.51.100.1-198.51.100.50":
                 self._req("DELETE", f"/api/rules/{r['id']}", token=token)
 
+    def test_bruteforce_api(self):
+        """防爆破配置 API：查询/保存/校验/手动解封"""
+        # 注意：本测试按字母序最先执行，密码还是初始值 TEST_PASS
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("GET", "/api/bruteforce", token=token)
+        self.assertEqual(code, 200)
+        self.assertFalse(d["enabled"])
+        # 保存配置
+        code, d = self._req("POST", "/api/bruteforce",
+                            {"enabled": True, "max_fails": 3, "ban_seconds": 600},
+                            token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/bruteforce", token=token)
+        self.assertTrue(d["enabled"])
+        self.assertEqual(d["max_fails"], 3)
+        self.assertEqual(d["ban_seconds"], 600)
+        # 非法参数
+        code, d = self._req("POST", "/api/bruteforce", {"max_fails": 0}, token=token)
+        self.assertEqual(code, 400)
+        # 手动解封不存在 IP（幂等）
+        code, d = self._req("DELETE", "/api/bruteforce/203.0.113.66", token=token)
+        self.assertEqual(code, 200)
+        # 恢复默认
+        self._req("POST", "/api/bruteforce", {"enabled": False}, token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
@@ -720,6 +760,81 @@ class TestUpgrade(unittest.TestCase):
             self.assertEqual(panel.ssh_service_name(), "sshd")
         finally:
             panel.subprocess.run = real
+
+    def test_bf_cfg_defaults(self):
+        cfg = make_cfg()
+        bf = panel.bf_cfg(cfg)
+        self.assertEqual(bf["enabled"], False)
+        self.assertEqual(bf["max_fails"], 5)
+        self.assertEqual(bf["ban_seconds"], 3600)
+        self.assertEqual(bf["fail_window"], 300)
+        cfg.set("bruteforce", {"enabled": True, "max_fails": 3, "ban_seconds": 600, "fail_window": 120})
+        bf = panel.bf_cfg(cfg)
+        self.assertEqual(bf["max_fails"], 3)
+        self.assertEqual(bf["ban_seconds"], 600)
+
+    def test_bf_cycle_bans_and_expires(self):
+        """防爆破一轮扫描：封禁超阈值 IP + 到期自动解封"""
+        cfg = make_cfg()
+        cfg.set("bruteforce", {"enabled": True, "max_fails": 3, "ban_seconds": 600, "fail_window": 300})
+        store = panel.RuleStore()
+        store.rules = []
+        real_a, real_e = panel.get_failed_ssh_attempts, panel.get_established_ips
+        panel.get_failed_ssh_attempts = lambda w: {"203.0.113.66": 3, "127.0.0.1": 99}
+        panel.get_established_ips = lambda p: set()
+        try:
+            logs = panel.bruteforce_cycle(cfg, store, now=1000)
+            # 超阈值被封禁，回环 IP 豁免
+            self.assertTrue(any(r.get("ip") == "203.0.113.66" for r in store.rules))
+            self.assertFalse(any(r.get("ip") == "127.0.0.1" for r in store.rules))
+            bans = panel.load_bans()
+            self.assertEqual(bans["203.0.113.66"], 1600, "封禁到期时间 = now + ban_seconds")
+            # 到期后自动解封
+            panel.bruteforce_cycle(cfg, store, now=1700)
+            self.assertFalse(any(r.get("ip") == "203.0.113.66" for r in store.rules),
+                             "到期应自动解封")
+            self.assertNotIn("203.0.113.66", panel.load_bans())
+        finally:
+            panel.get_failed_ssh_attempts = real_a
+            panel.get_established_ips = real_e
+            panel.RuleStore().rules = []
+            panel.RuleStore().save()
+            if os.path.exists(panel.BANS_FILE):
+                os.remove(panel.BANS_FILE)
+
+    def test_bf_cycle_exempt_established(self):
+        """当前已连接 IP 豁免封禁（防把自己锁死）"""
+        cfg = make_cfg()
+        cfg.set("bruteforce", {"enabled": True, "max_fails": 2, "ban_seconds": 600, "fail_window": 300})
+        store = panel.RuleStore()
+        store.rules = []
+        real_a, real_e = panel.get_failed_ssh_attempts, panel.get_established_ips
+        panel.get_failed_ssh_attempts = lambda w: {"198.51.100.9": 5}
+        panel.get_established_ips = lambda p: {"198.51.100.9"}
+        try:
+            panel.bruteforce_cycle(cfg, store, now=1000)
+            self.assertFalse(any(r.get("ip") == "198.51.100.9" for r in store.rules),
+                             "当前连接 IP 应豁免")
+        finally:
+            panel.get_failed_ssh_attempts = real_a
+            panel.get_established_ips = real_e
+            panel.RuleStore().rules = []
+            panel.RuleStore().save()
+            if os.path.exists(panel.BANS_FILE):
+                os.remove(panel.BANS_FILE)
+
+    def test_bf_disabled_no_action(self):
+        cfg = make_cfg()   # 默认未启用
+        store = panel.RuleStore()
+        store.rules = []
+        real_a = panel.get_failed_ssh_attempts
+        panel.get_failed_ssh_attempts = lambda w: {"1.2.3.4": 999}
+        try:
+            logs = panel.bruteforce_cycle(cfg, store, now=1000)
+            self.assertEqual(logs, [])
+            self.assertEqual(store.rules, [])
+        finally:
+            panel.get_failed_ssh_attempts = real_a
 
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""
