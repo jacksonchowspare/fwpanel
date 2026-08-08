@@ -335,6 +335,40 @@ class TestAPI(unittest.TestCase):
                 if r.get("comment") == panel.PANEL_PORT_COMMENT:
                     self._req("DELETE", f"/api/rules/{r['id']}", token=token)
 
+    def test_panel_port_auto_allow(self):
+        """无面板端口规则时改端口，应自动添加新端口放行（防严格模式锁死）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        real_timer, real_restart = panel.threading.Timer, panel.restart_service
+        class FakeTimer:
+            def __init__(self, delay, fn):
+                self.fn = fn
+            def start(self):
+                pass
+        panel.threading.Timer = FakeTimer
+        panel.restart_service = lambda: None
+        try:
+            # 不预置任何面板端口规则，直接改端口
+            code, d = self._req("POST", "/api/panel/port", {"port": 18002}, token=token)
+            self.assertEqual(code, 200, d)
+            code, d = self._req("GET", "/api/rules", token=token)
+            self.assertTrue(any(r.get("comment") == panel.PANEL_PORT_COMMENT
+                                and r.get("port") == 18002 for r in d["rules"]),
+                            "改端口后应自动添加新端口放行规则")
+            # 渲染应包含新端口放行
+            text = self.store.render(self.cfg)
+            self.assertIn("tcp dport 18002 accept", text)
+        finally:
+            panel.threading.Timer = real_timer
+            panel.restart_service = real_restart
+            self.server.config.set("port", 17999)
+            code, d = self._req("GET", "/api/rules", token=token)
+            for r in d["rules"]:
+                if r.get("comment") == panel.PANEL_PORT_COMMENT:
+                    self._req("DELETE", f"/api/rules/{r['id']}", token=token)
+
     def test_username(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
