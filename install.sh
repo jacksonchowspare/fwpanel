@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="fwpanel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.1.2"
+readonly SCRIPT_VERSION="1.1.3"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -88,10 +88,13 @@ check_arch() {
 }
 
 check_tools() {
-    command -v python3 >/dev/null 2>&1 || error "缺少 python3（Debian 自带，请先: apt install python3）"
-    local pyver
-    pyver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-    log_info "Python: $pyver ✓"
+    if command -v python3 >/dev/null 2>&1; then
+        local pyver
+        pyver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+        log_info "Python: $pyver ✓"
+    else
+        log_warn "未安装 python3，将在安装依赖时自动安装"
+    fi
     if command -v nft >/dev/null 2>&1; then
         log_info "nftables: $(nft --version 2>/dev/null | head -1) ✓"
     else
@@ -215,10 +218,14 @@ resolve_params() {
 # ============================== 安装 ==============================
 
 install_deps() {
-    if ! command -v nft >/dev/null 2>&1; then
-        log_info "安装 nftables ..."
+    # 缺什么装什么（Debian 最小化安装可能没有 python3/nftables）
+    local pkgs=()
+    command -v python3 >/dev/null 2>&1 || pkgs+=(python3)
+    command -v nft >/dev/null 2>&1 || pkgs+=(nftables)
+    if [ "${#pkgs[@]}" -gt 0 ]; then
+        log_info "安装依赖: ${pkgs[*]} ..."
         apt-get update -y
-        DEBIAN_FRONTEND=noninteractive apt-get install -y nftables
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "${pkgs[@]}"
     fi
     log_info "依赖就绪（python3 + nftables）"
 }
