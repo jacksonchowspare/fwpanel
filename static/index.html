@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fwpanel · 防火墙控制面板</title>
+<style>
+:root {
+  --bg: #0f1419; --card: #1a212b; --border: #2a3542;
+  --text: #e6ebf2; --muted: #8b98a9; --accent: #3d8bfd; --accent2: #22c55e;
+  --danger: #ef4444; --warn: #f59e0b;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font: 14px/1.6 "PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
+.wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; }
+h1 { font-size: 20px; display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
+.sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; }
+.topbar .actions { display: flex; gap: 8px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.card .k { color: var(--muted); font-size: 12px; }
+.card .v { font-size: 18px; font-weight: 600; margin-top: 4px; }
+.card .v.ok { color: var(--accent2); } .card .v.off { color: var(--danger); }
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+.panel h2 { font-size: 15px; margin-bottom: 12px; }
+.btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+.btn:hover { opacity: .88; }
+.btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn.danger { background: var(--danger); }
+.btn.mini { padding: 4px 10px; font-size: 12px; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+input, select { background: #0d1218; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
+input:focus, select:focus { border-color: var(--accent); }
+.form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+th { color: var(--muted); font-weight: 500; }
+tr:hover td { background: #1d2733; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.tag.allow { background: rgba(34,197,94,.15); color: var(--accent2); }
+.tag.deny { background: rgba(239,68,68,.15); color: var(--danger); }
+.tag.ip { background: rgba(61,139,253,.15); color: var(--accent); }
+.tag.prot { color: var(--warn); }
+.switch { position: relative; width: 38px; height: 20px; display: inline-block; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; inset: 0; background: var(--border); border-radius: 20px; transition: .2s; cursor: pointer; }
+.slider::before { content: ""; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+.switch input:checked + .slider { background: var(--accent2); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+.svc { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed var(--border); }
+.svc:last-child { border-bottom: 0; }
+.svc .name { font-weight: 500; } .svc .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.empty { color: var(--muted); text-align: center; padding: 24px; }
+#toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #232e3b; border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; font-size: 13px; }
+#toast.err { border-color: var(--danger); color: var(--danger); }
+#toast.okk { border-color: var(--accent2); color: var(--accent2); }
+#login { max-width: 360px; margin: 12vh auto; }
+#login .panel { padding: 28px; }
+#login h1 { justify-content: center; margin-bottom: 20px; }
+#login .form-row { flex-direction: column; }
+#login input { width: 100%; padding: 10px; }
+.hidden { display: none !important; }
+.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; width: 340px; }
+.modal h3 { margin-bottom: 14px; }
+.modal .form-row { flex-direction: column; }
+.modal input { width: 100%; }
+.modal .btnrow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- 登录 -->
+  <div id="login" class="hidden">
+    <div class="panel">
+      <h1><span class="dot"></span>fwpanel</h1>
+      <div class="form-row"><input id="lg_user" placeholder="用户名" autocomplete="username"></div>
+      <div class="form-row"><input id="lg_pass" type="password" placeholder="密码" autocomplete="current-password"></div>
+      <div class="form-row"><button class="btn" style="width:100%" onclick="login()">登 录</button></div>
+    </div>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="main" class="hidden">
+    <div class="topbar">
+      <div>
+        <h1><span class="dot"></span>fwpanel <span style="font-size:12px;color:var(--muted)" id="hostname"></span></h1>
+        <div class="sub">Debian 13 · nftables 防火墙控制面板</div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" onclick="openPwd()">修改密码</button>
+        <button class="btn ghost" onclick="logout()">退出</button>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="k">防火墙状态</div><div class="v ok" id="st_fw">-</div></div>
+      <div class="card"><div class="k">规则模式</div><div class="v" id="st_mode">-</div></div>
+      <div class="card"><div class="k">规则数量</div><div class="v" id="st_rules">-</div></div>
+      <div class="card"><div class="k">SSH 保护端口</div><div class="v" id="st_ssh">-</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>模式与保护</h2>
+      <div class="form-row">
+        <select id="mode_sel">
+          <option value="permissive">宽松模式（默认放行，按需拒绝）</option>
+          <option value="strict">严格模式（默认拒绝，白名单放行）</option>
+        </select>
+        <button class="btn" onclick="setMode()">应用模式</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">SSH(<span id="ssh_port"></span>) 始终放行，防锁死</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>服务快捷开关</h2>
+      <div id="svc_list"></div>
+    </div>
+
+    <div class="panel">
+      <h2>⚡ 一键开放端口（公网）</h2>
+      <div class="form-row">
+        <input id="qp_port" placeholder="端口 (1-65535)" style="width:130px" inputmode="numeric">
+        <select id="qp_proto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+        <button class="btn" onclick="quickOpen()">一键开放</button>
+        <span style="color:var(--muted);font-size:12px;align-self:center">立即添加放行规则并生效，重复开放不会报错</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>添加规则</h2>
+      <div class="form-row">
+        <select id="r_type">
+          <option value="port_allow">放行端口</option>
+          <option value="port_deny">拒绝端口</option>
+          <option value="ip_allow">放行 IP</option>
+          <option value="ip_deny">拒绝 IP</option>
+        </select>
+        <select id="r_proto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+        <input id="r_port" placeholder="端口 (1-65535)" style="width:120px">
+        <input id="r_ip" placeholder="IP 地址 (支持 IPv6)" style="width:170px">
+        <input id="r_comment" placeholder="备注（可选）" style="width:150px">
+        <button class="btn" onclick="addRule()">添加</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>规则列表 <span style="color:var(--muted);font-size:12px">（第 1 条为 SSH 保护，不可删除）</span></h2>
+      <table>
+        <thead><tr><th>类型</th><th>协议</th><th>端口 / IP</th><th>备注</th><th>操作</th></tr></thead>
+        <tbody id="rule_rows"></tbody>
+      </table>
+      <div id="no_rules" class="empty">暂无规则</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- 修改密码弹窗 -->
+<div id="pwd_modal" class="modal-mask hidden">
+  <div class="modal">
+    <h3>修改密码</h3>
+    <div class="form-row"><input id="p_old" type="password" placeholder="原密码"></div>
+    <div class="form-row"><input id="p_new" type="password" placeholder="新密码（至少 8 位）"></div>
+    <div class="btnrow">
+      <button class="btn ghost" onclick="closePwd()">取消</button>
+      <button class="btn" onclick="changePwd()">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let token = localStorage.getItem("fw_token") || "";
+let status = {};
+
+function $(id) { return document.getElementById(id); }
+function toast(msg, type) {
+  const t = $("toast"); t.textContent = msg; t.className = type || "";
+  t.style.display = "block";
+  clearTimeout(t._timer); t._timer = setTimeout(() => t.style.display = "none", 2500);
+}
+async function api(method, path, body) {
+  const opt = { method, headers: {} };
+  if (token) opt.headers["Authorization"] = "Bearer " + token;
+  if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const r = await fetch(API + path, opt);
+  let data = {};
+  try { data = await r.json(); } catch (e) {}
+  if (r.status === 401 && path !== "/api/login") { showLogin(); throw new Error(data.error || "未登录"); }
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+
+/* ---------- 登录 ---------- */
+function showLogin() { $("login").classList.remove("hidden"); $("main").classList.add("hidden"); }
+function showMain()  { $("login").classList.add("hidden"); $("main").classList.remove("hidden"); }
+async function login() {
+  try {
+    const d = await api("POST", "/api/login", { username: $("lg_user").value, password: $("lg_pass").value });
+    token = d.token; localStorage.setItem("fw_token", token);
+    showMain(); refreshAll(); toast("登录成功", "okk");
+  } catch (e) { toast(e.message, "err"); }
+}
+function logout() { token = ""; localStorage.removeItem("fw_token"); showLogin(); }
+
+/* ---------- 状态 ---------- */
+async function refreshAll() {
+  try {
+    status = await api("GET", "/api/status");
+    $("hostname").textContent = "· " + status.hostname;
+    $("st_fw").textContent = status.loaded ? "已生效" : "未加载";
+    $("st_fw").className = "v " + (status.loaded ? "ok" : "off");
+    $("st_mode").textContent = status.mode === "strict" ? "严格（默认拒绝）" : "宽松（默认放行）";
+    $("st_rules").textContent = status.rule_count;
+    $("st_ssh").textContent = status.ssh_port;
+    $("ssh_port").textContent = status.ssh_port;
+    $("mode_sel").value = status.mode;
+    renderSvc(); renderRules();
+  } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+/* ---------- 服务开关 ---------- */
+const SVCS = [["ssh","22"],["http","80"],["https","443"],["dns","53"],["mail","25"],["imap","143"],["smtps","465"]];
+async function renderSvc() {
+  const rules = (await api("GET", "/api/rules")).rules;
+  const list = $("svc_list"); list.innerHTML = "";
+  for (const [name, port] of SVCS) {
+    const on = rules.some(r => r.type === "port_allow" && r.port == port);
+    const row = document.createElement("div"); row.className = "svc";
+    row.innerHTML = `<span><span class="name">${name.toUpperCase()}</span><span class="desc">${port}/tcp</span></span>
+      <label class="switch"><input type="checkbox" ${on ? "checked" : ""} onchange="toggleSvc('${name}', this.checked)"><span class="slider"></span></label>`;
+    list.appendChild(row);
+  }
+}
+async function toggleSvc(name, on) {
+  try { await api("POST", "/api/service", { name, enabled: on }); toast(`服务 ${name} 已${on ? "放行" : "拒绝"}`, "okk"); refreshAll(); }
+  catch (e) { toast(e.message, "err"); refreshAll(); }
+}
+
+/* ---------- 模式 ---------- */
+async function setMode() {
+  try { await api("POST", "/api/mode", { mode: $("mode_sel").value }); toast("模式已更新", "okk"); refreshAll(); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------- 规则 ---------- */
+function typeTag(r) {
+  const map = { port_allow: ["tag allow", "放行端口"], port_deny: ["tag deny", "拒绝端口"], ip_allow: ["tag allow", "放行 IP"], ip_deny: ["tag deny", "拒绝 IP"] };
+  const [cls, txt] = map[r.type] || ["", r.type];
+  return `<span class="tag ${cls}">${txt}</span>`;
+}
+async function renderRules() {
+  const { rules } = await api("GET", "/api/rules");
+  const tbody = $("rule_rows"); tbody.innerHTML = "";
+  $("no_rules").style.display = rules.length ? "none" : "block";
+  rules.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    const target = r.port ? `<span class="tag prot">${r.proto}/${r.port}</span>` : `<span class="tag ip">${r.ip}</span>`;
+    const del = r.protected
+      ? `<span style="color:var(--muted)">保护</span>`
+      : `<button class="btn mini danger" onclick="delRule('${r.id}')">删除</button>`;
+    tr.innerHTML = `<td>${typeTag(r)}</td><td>${r.proto || "-"}</td><td>${target}</td><td>${r.comment || ""}</td><td>${del}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+async function addRule() {
+  const body = { type: $("r_type").value, comment: $("r_comment").value };
+  if (body.type.startsWith("port")) { body.proto = $("r_proto").value; body.port = $("r_port").value; }
+  else body.ip = $("r_ip").value;
+  try { await api("POST", "/api/rules", body); toast("规则已添加并生效", "okk"); $("r_port").value = ""; $("r_ip").value = ""; $("r_comment").value = ""; refreshAll(); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------- 一键开放端口 ---------- */
+async function quickOpen() {
+  const port = $("qp_port").value.trim();
+  if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
+  const proto = $("qp_proto").value;
+  try {
+    const d = await api("POST", "/api/open-port", { port, proto });
+    toast(d.msg || `端口 ${port} 已开放`, "okk");
+    $("qp_port").value = "";
+    refreshAll();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function delRule(id) {
+  if (!confirm("确认删除该规则？")) return;
+  try { await api("DELETE", "/api/rules/" + id); toast("规则已删除", "okk"); refreshAll(); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------- 密码 ---------- */
+function openPwd() { $("pwd_modal").classList.remove("hidden"); }
+function closePwd() { $("pwd_modal").classList.add("hidden"); }
+async function changePwd() {
+  try {
+    await api("POST", "/api/password", { old_password: $("p_old").value, new_password: $("p_new").value });
+    toast("密码已修改", "okk"); closePwd(); $("p_old").value = ""; $("p_new").value = "";
+  } catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------- 初始化 ---------- */
+document.addEventListener("keydown", e => { if (e.key === "Enter" && !$("main").classList.contains("hidden") === false) login(); });
+(async () => {
+  if (token) { try { showMain(); await refreshAll(); } catch (e) { showLogin(); } }
+  else showLogin();
+})();
+</script>
+</body>
+</html>

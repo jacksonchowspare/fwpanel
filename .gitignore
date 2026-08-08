@@ -1,0 +1,13 @@
+# 打包产物
+*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+
+# 编辑器
+.vscode/
+.idea/
+
+# 系统
+.DS_Store

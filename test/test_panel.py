@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""fwpanel 单元测试 + HTTP API 冒烟测试（无需 root，使用临时目录 + dry-run）"""
+import json
+import os
+import sys
+import tempfile
+import threading
+import unittest
+import urllib.request
+
+# ---- 必须在 import panel 前设置测试环境 ----
+TMP = tempfile.mkdtemp(prefix="fwpanel-test-")
+os.environ["FW_TEST_DIR"] = TMP
+os.environ["FW_DRY_RUN"] = "1"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import panel  # noqa: E402
+
+# ---- 准备测试配置 ----
+TEST_USER = "tester"
+TEST_PASS = "TestPass123"
+panel.Config.__init__ = lambda self: setattr(self, "data", {})  # 避免读真实配置
+
+
+def make_cfg(user=TEST_USER, pwd=TEST_PASS, mode="permissive"):
+    """每个测试独立配置，避免状态污染"""
+    cfg = panel.Config()
+    cfg.data = {
+        "username": user,
+        "password_hash": panel.hash_password(pwd),
+        "port": 17999,
+        "bind": "127.0.0.1",
+        "mode": mode,
+        "ssh_port": 22,
+    }
+    return cfg
+
+
+class TestAuth(unittest.TestCase):
+    def setUp(self):
+        self.cfg = make_cfg()
+        self.auth = panel.Auth(self.cfg)
+
+    def test_login_ok(self):
+        token, msg = self.auth.login(TEST_USER, TEST_PASS)
+        self.assertTrue(token, msg)
+        self.assertTrue(self.auth.check(token))
+
+    def test_login_wrong(self):
+        token, msg = self.auth.login(TEST_USER, "wrongpass")
+        self.assertIsNone(token)
+
+    def test_lockout(self):
+        auth = panel.Auth(make_cfg())
+        for _ in range(panel.LOCK_MAX_FAIL):
+            auth.login(TEST_USER, "bad")
+        self.assertTrue(auth.check_locked())
+        token, _ = auth.login(TEST_USER, TEST_PASS)
+        self.assertIsNone(token, "锁定期内不应允许登录")
+
+    def test_hash(self):
+        h = panel.hash_password("abc12345")
+        self.assertTrue(panel.verify_password("abc12345", h))
+        self.assertFalse(panel.verify_password("abc12346", h))
+
+
+class TestRules(unittest.TestCase):
+    def setUp(self):
+        panel.RuleStore._load = lambda self: []   # 隔离：不读磁盘
+        self.store = panel.RuleStore()
+        self.store.rules = []
+        self.cfg = make_cfg()
+
+    def test_render_permissive(self):
+        self.store.rules = [
+            {"id": "1", "type": "port_allow", "proto": "tcp", "port": 80, "comment": "web"},
+            {"id": "2", "type": "port_deny", "proto": "tcp", "port": 23, "comment": ""},
+            {"id": "3", "type": "ip_allow", "ip": "1.2.3.4", "comment": ""},
+            {"id": "4", "type": "ip_deny", "ip": "5.6.7.8", "comment": "bad"},
+        ]
+        text = self.store.render(self.cfg)
+        self.assertIn("policy accept", text)
+        self.assertIn("tcp dport 80 accept", text)
+        self.assertIn("# web", text)
+        self.assertIn("tcp dport 23 drop", text)
+        self.assertIn("ip saddr 1.2.3.4 accept", text)
+        self.assertIn("ip saddr 5.6.7.8 drop", text)
+        self.assertIn("# bad", text)
+        # SSH 保护永远存在
+        self.assertIn("tcp dport 22 accept   # SSH 保护", text)
+        # 顺序：SSH 保护必须在用户规则之前
+        self.assertLess(text.index("SSH 保护"), text.index("tcp dport 80"))
+
+    def test_render_strict(self):
+        strict_cfg = make_cfg(mode="strict")
+        text = self.store.render(strict_cfg)
+        self.assertIn("policy drop", text)
+
+    def test_render_ipv6(self):
+        self.store.rules = [{"id": "1", "type": "ip_allow", "ip": "2001:db8::1", "comment": ""}]
+        text = self.store.render(self.cfg)
+        self.assertIn("ip6 saddr 2001:db8::1 accept", text)
+
+    def test_protected_rule_not_deletable(self):
+        self.store.rules = [{"id": "x1", "type": "port_allow", "proto": "tcp",
+                             "port": 22, "comment": "SSH 保护(不可删除)", "protected": True}]
+        ok, msg = self.store.remove("x1")
+        self.assertFalse(ok)
+        self.assertIn("不可删除", msg)
+
+    def test_add_remove(self):
+        r = self.store.add({"type": "port_allow", "proto": "tcp", "port": 8080, "comment": "t"})
+        self.assertIn("id", r)
+        self.assertEqual(len(self.store.rules), 1)
+        ok, _ = self.store.remove(r["id"])
+        self.assertTrue(ok)
+        self.assertEqual(len(self.store.rules), 0)
+
+
+class TestAPI(unittest.TestCase):
+    """HTTP API 冒烟测试：真实起服务 + urllib 请求（dry-run 不执行 nft）"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg = make_cfg()
+        cls.store = panel.RuleStore()
+        cls.store.rules = []
+        cls.nft = panel.NFTManager(cls.store, cls.cfg)
+        cls.auth = panel.Auth(cls.cfg)
+        cls.server = panel.PanelServer(("127.0.0.1", 17999), panel.PanelHandler,
+                                       cls.cfg, cls.store, cls.nft, cls.auth)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base = "http://127.0.0.1:17999"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def _req(self, method, path, data=None, token=None):
+        req = urllib.request.Request(self.base + path, method=method)
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode()
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, body) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read())
+            except Exception:
+                return e.code, {}
+
+    def test_open_port(self):
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 一键开放端口
+        code, d = self._req("POST", "/api/open-port", {"port": 9000, "proto": "tcp"}, token=token)
+        self.assertEqual(code, 200, d)
+        self.assertIn("已开放", d["msg"])
+        # 幂等：重复开放返回成功且不报错
+        code, d = self._req("POST", "/api/open-port", {"port": 9000, "proto": "tcp"}, token=token)
+        self.assertEqual(code, 200)
+        self.assertIn("已在放行列表", d["msg"])
+        # 规则确实存在
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r["port"] == 9000 for r in d["rules"]))
+        # 非法端口
+        code, d = self._req("POST", "/api/open-port", {"port": 99999}, token=token)
+        self.assertEqual(code, 400)
+
+    def test_full_flow(self):
+        # 未登录访问被拒
+        code, _ = self._req("GET", "/api/status")
+        self.assertEqual(code, 401)
+        # 登录
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        # 状态
+        code, d = self._req("GET", "/api/status", token=token)
+        self.assertEqual(code, 200)
+        self.assertEqual(d["mode"], "permissive")
+        # 添加端口规则
+        code, d = self._req("POST", "/api/rules",
+                            {"type": "port_allow", "proto": "tcp", "port": 8080,
+                             "comment": "test-web"}, token=token)
+        self.assertEqual(code, 200, d)
+        # 添加非法规则被拒
+        code, d = self._req("POST", "/api/rules",
+                            {"type": "port_allow", "proto": "tcp", "port": "abc"}, token=token)
+        self.assertEqual(code, 400)
+        # 列表
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(d["rules"]), 1)
+        rid = d["rules"][0]["id"]
+        # 删除
+        code, d = self._req("DELETE", f"/api/rules/{rid}", token=token)
+        self.assertEqual(code, 200)
+        # 服务开关
+        code, d = self._req("POST", "/api/service", {"name": "http", "enabled": True}, token=token)
+        self.assertEqual(code, 200)
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r["port"] == 80 for r in d["rules"]))
+        # 模式切换
+        code, d = self._req("POST", "/api/mode", {"mode": "strict"}, token=token)
+        self.assertEqual(code, 200)
+        # 改密码（错误旧密码）
+        code, d = self._req("POST", "/api/password",
+                            {"old_password": "wrong", "new_password": "NewPass123"}, token=token)
+        self.assertEqual(code, 400)
+        # 改密码（正确）
+        code, d = self._req("POST", "/api/password",
+                            {"old_password": TEST_PASS, "new_password": "NewPass123"}, token=token)
+        self.assertEqual(code, 200)
+        # 新密码可登录
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        # 登出后 token 失效
+        self._req("GET", "/api/logout", token=token)
+        code, _ = self._req("GET", "/api/status", token=token)
+        self.assertEqual(code, 401)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
