@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.18.2"
+CURRENT_VERSION = "1.18.3"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1126,13 +1126,13 @@ def bbr_available():
 
 
 def enable_bbr():
-    """开启 BBR：写入 sysctl 配置（持久化）并立即生效"""
+    """开启 BBR：写入 sysctl 配置（持久化）并立即生效，回读校验"""
     if DRY_RUN:
         log("[dry-run] 写入 BBR sysctl 配置（跳过）")
         return True, "dry-run"
     if not bbr_available():
         return False, "内核不支持 BBR（需 Linux 4.9+ 且内核包含 bbr 模块）"
-    conf = "/etc/sysctl.d/99-fwpanel-bbr.conf"
+    conf = os.environ.get("FW_BBR_CONF", "/etc/sysctl.d/99-fwpanel-bbr.conf")
     content = "net.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n"
     try:
         with open(conf, "w") as f:
@@ -1140,14 +1140,22 @@ def enable_bbr():
     except OSError as e:
         return False, f"写入配置失败: {e}"
     try:
-        # 立即生效（默认 qdisc fq + bbr）
-        subprocess.run(["sysctl", "-w", "net.core.default_qdisc=fq"],
-                       capture_output=True, text=True, timeout=10)
-        subprocess.run(["sysctl", "-w", "net.ipv4.tcp_congestion_control=bbr"],
-                       capture_output=True, text=True, timeout=10)
+        r1 = subprocess.run(["sysctl", "-w", "net.core.default_qdisc=fq"],
+                            capture_output=True, text=True, timeout=10)
+        if r1.returncode != 0:
+            return False, f"设置 qdisc 失败: {(r1.stderr or r1.stdout).strip()[:200]}"
+        r2 = subprocess.run(["sysctl", "-w", "net.ipv4.tcp_congestion_control=bbr"],
+                            capture_output=True, text=True, timeout=10)
+        if r2.returncode != 0:
+            return False, f"设置 BBR 失败: {(r2.stderr or r2.stdout).strip()[:200]}"
+    except FileNotFoundError:
+        return False, "sysctl 不可用（配置已写入，重启后生效）"
     except Exception:
         return False, "sysctl 应用失败（配置已写入，重启后生效）"
-    return True, "BBR 已开启"
+    # 回读校验：确认内核实际生效
+    if not bbr_status():
+        return False, "BBR 配置已写入但内核未生效（可能被其他 sysctl 配置覆盖），请重启后检查 /proc/sys/net/ipv4/tcp_congestion_control"
+    return True, "BBR 已开启（回读校验通过）"
 
 
 # ------------------------------- HTTP 服务 -------------------------------

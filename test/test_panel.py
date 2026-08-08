@@ -1280,6 +1280,34 @@ class TestUpgrade(unittest.TestCase):
         ok, msg = panel.enable_bbr()
         self.assertTrue(ok, msg)
 
+    def test_enable_bbr_verify(self):
+        """BBR 开启后回读校验：生效返回成功，未生效返回失败"""
+        import subprocess as sp
+        real_run, real_avail, real_status = (panel.subprocess.run,
+                                             panel.bbr_available, panel.bbr_status)
+        real_dry, real_conf = panel.DRY_RUN, os.environ.get("FW_BBR_CONF")
+        os.environ["FW_BBR_CONF"] = "/tmp/fwpanel-bbr-test.conf"
+        panel.DRY_RUN = False
+        panel.bbr_available = lambda: True
+        panel.subprocess.run = lambda cmd, *a, **k: sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        try:
+            panel.bbr_status = lambda: True
+            ok, msg = panel.enable_bbr()
+            self.assertTrue(ok, msg)
+            panel.bbr_status = lambda: False
+            ok, msg = panel.enable_bbr()
+            self.assertFalse(ok, "回读未生效应返回失败")
+            self.assertIn("未生效", msg)
+        finally:
+            panel.subprocess.run, panel.bbr_available, panel.bbr_status = real_run, real_avail, real_status
+            panel.DRY_RUN = real_dry
+            if real_conf is None:
+                os.environ.pop("FW_BBR_CONF", None)
+            else:
+                os.environ["FW_BBR_CONF"] = real_conf
+            if os.path.exists("/tmp/fwpanel-bbr-test.conf"):
+                os.remove("/tmp/fwpanel-bbr-test.conf")
+
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""
         cfg = make_cfg()
