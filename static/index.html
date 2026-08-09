@@ -1069,7 +1069,12 @@ async function renderSvc() {
     const svcRules = rules.filter(r => r.type === "port_allow" && r.comment === "服务:" + label);
     const histSet = new Set();
     svcRules.forEach(r => histSet.add(r.port + "/" + r.proto));
-    const histOpts = [...histSet].map(h => `<option value="${h}">${h}</option>`).join("");
+    // 按端口号升序排列（同端口按协议字母序），避免历史下拉杂乱
+    const histArr = [...histSet].sort((a, b) => {
+      const pa = parseInt(a.split("/")[0], 10), pb = parseInt(b.split("/")[0], 10);
+      return pa - pb || a.localeCompare(b);
+    });
+    const histOpts = histArr.map(h => `<option value="${h}">${h}</option>`).join("");
     const row = document.createElement("div"); row.className = "svc";
     // 输入框不放行后保留端口（历史下拉已有记录）；按钮常亮，支持连续放行多个端口
     row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="" oninput="csPortChanged('${name}')"><select id="cs_proto_${name}" class="cs-proto" onchange="csPortChanged('${name}')"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select><select id="cs_hist_${name}" class="cs-hist" onchange="csHistPick('${name}')"><option value="">历史端口</option>${histOpts}</select></span>
