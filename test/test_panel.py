@@ -1133,6 +1133,14 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("GET", "/api/ssh/allow-ips", token=token)
         self.assertEqual(d["ips"], [])
 
+    def test_cert_renew_status(self):
+        """证书自动续期状态检测：结构完整（测试环境无 certbot.timer）"""
+        info = panel.cert_renew_status()
+        self.assertIn("enabled", info)
+        self.assertIsInstance(info["enabled"], bool)
+        if info["enabled"]:
+            self.assertIn("via", info)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

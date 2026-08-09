@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.23.12"
+CURRENT_VERSION = "1.23.13"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -932,6 +932,27 @@ def certbot_available():
 
 def cert_files_exist(domain):
     return os.path.isfile(os.path.join(LE_LIVE, domain, "fullchain.pem"))
+
+
+def cert_renew_status():
+    """检测 certbot 自动续期状态：systemd timer / cron 任务"""
+    if not certbot_available():
+        return {"enabled": False, "via": "", "next": "", "reason": "certbot 未安装"}
+    try:
+        r = subprocess.run(["systemctl", "list-timers", "certbot.timer", "--no-pager"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and "certbot.timer" in r.stdout:
+            for line in r.stdout.splitlines():
+                if "certbot.timer" in line:
+                    parts = line.split()
+                    return {"enabled": True, "via": "systemd timer",
+                            "next": (parts[0] + " " + parts[1]) if len(parts) >= 2 else "",
+                            "reason": ""}
+    except Exception:
+        pass
+    if os.path.exists("/etc/cron.d/certbot"):
+        return {"enabled": True, "via": "cron", "next": "每天两次随机检查", "reason": ""}
+    return {"enabled": False, "via": "", "next": "", "reason": "未找到 systemd timer 或 cron 续期任务"}
 
 
 def cert_status(domain):
@@ -1997,6 +2018,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200, {
             "installed": nginx_available(),
             "certbot": certbot_available(),
+            "renew": cert_renew_status(),
             "certs": items,
         })
 

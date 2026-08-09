@@ -555,8 +555,15 @@ async function loadCerts() {
     const d = await api("GET", "/api/cert");
     const st = $("cert_status");
     st.style.color = "";
+    let renewTxt = "";
+    if (d.renew) {
+      renewTxt = d.renew.enabled
+        ? ` · 自动续期 ✅（${d.renew.via}${d.renew.next ? "，下次 " + d.renew.next : ""}）`
+        : ` · ⚠ 自动续期未启用：${d.renew.reason || "未知"}`;
+    }
     st.textContent = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（需先一键安装）")
-      + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装");
+      + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装")
+      + renewTxt;
     const tbody = $("cert_rows"); tbody.innerHTML = "";
     if (!d.certs.length) { tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">暂无独立申请记录</td></tr>'; return; }
     for (const c of d.certs) {
