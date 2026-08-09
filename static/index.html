@@ -284,19 +284,20 @@ tr:hover td { background: #1d2733; }
             保护规则永远存在防锁死；切换端口时旧端口会临时放行，检测到新端口连接后自动清理旧规则
           </div>
           <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">🔒 SSH 白名单：仅允许以下 IP/CIDR 访问 SSH 端口（留空 = 所有 IP 可访问）</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px">🔧 面板端口</div>
+          <div class="form-row" style="margin-bottom:6px">
+            <input id="panel_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
+            <button class="btn" onclick="setPanelPort()">修改面板端口</button>
+          </div>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:14px">改后自动删除旧端口放行并放行新端口、重启服务；通过反代域名访问时目标端口自动同步，无需手动调整</div>
+          <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px">🔒 SSH 白名单</div>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">仅允许以下 IP/CIDR 访问 SSH 端口（留空 = 所有 IP 可访问）</div>
           <div class="form-row" style="margin-bottom:8px">
             <input id="ssh_allow_input" placeholder="IP/CIDR，如 1.2.3.4 或 5.6.7.0/24" style="flex:1;min-width:180px">
             <button class="btn" onclick="addSshAllow()">添加</button>
           </div>
           <div id="ssh_allow_list">加载中...</div>
-          <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-          <div class="form-row" style="margin-bottom:0">
-            <span style="align-self:center">面板端口</span>
-            <input id="panel_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
-            <button class="btn" onclick="setPanelPort()">修改面板端口</button>
-            <span style="color:var(--muted);font-size:12px;align-self:center">改后自动删旧放新并跳转</span>
-          </div>
         </div>
 
         <div class="panel">
