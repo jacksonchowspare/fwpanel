@@ -737,12 +737,19 @@ async function unban(ip) {
 async function setPanelPort() {
   const port = $("panel_port_input").value.trim();
   if (!port || !/^\d+$/.test(port)) { toast("请输入有效端口", "err"); return; }
-  confirmPanel(`确认将面板端口修改为 ${port}？\n\n将自动：删除旧端口放行规则 → 放行新端口 → 重启服务 → 跳转到新地址：\nhttp://${location.hostname}:${port}\n\n如使用 SSH 隧道访问，请先断开并重新建立新端口隧道。`, async () => {
+  confirmPanel(`确认将面板端口修改为 ${port}？\n\n将自动：删除旧端口放行规则 → 放行新端口 → 重启服务。\n直连访问将跳转到新地址；通过反代域名访问则无需变化（反代目标端口自动同步）。\n如使用 SSH 隧道访问，请先断开并重新建立新端口隧道。`, async () => {
     try {
       const d = await api("POST", "/api/panel/port", { port });
-      toast(d.msg || "面板端口已修改，正在跳转...", "okk");
-      const target = `${location.protocol}//${location.hostname}:${port}`;
-      setTimeout(() => { location.href = target; }, 3000);
+      toast(d.msg || "面板端口已修改", "okk");
+      // 通过反代访问（地址栏无端口或标准 80/443）：不跳转端口，刷新即可（后端已同步反代目标）
+      const curPort = location.port;
+      const viaProxy = curPort === "" || curPort === "80" || curPort === "443";
+      if (viaProxy) {
+        setTimeout(() => { location.reload(); }, 4000);
+      } else {
+        const target = `${location.protocol}//${location.hostname}:${port}`;
+        setTimeout(() => { location.href = target; }, 3000);
+      }
     } catch (e) { toast("修改失败: " + e.message, "err"); }
   }, "🔧 修改端口确认");
 }

@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.20.0"
+CURRENT_VERSION = "1.20.1"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1541,10 +1541,31 @@ class PanelHandler(BaseHTTPRequestHandler):
                        "comment": PANEL_PORT_COMMENT})
         store.save()
         self.server.nft.apply()
+        # 反代联动：有代理指向旧面板端口的，同步改为新端口（反代域名访问不受影响）
+        proxy_hint = ""
+        pstore = ProxyStore()
+        synced = [p for p in pstore.proxies if p.get("target_port") == old]
+        if synced:
+            for p in pstore.proxies:
+                if p.get("target_port") == old:
+                    p["target_port"] = port
+            pstore.save()
+            apply_proxies(pstore)
+            # 目标端口禁止规则迁移：旧端口 → 新端口
+            store.rules = [r for r in store.rules
+                           if not (r.get("type") == "port_deny" and r.get("port") == old
+                                   and r.get("comment") == PROXY_TARGET_DENY_COMMENT)]
+            if not any(r.get("type") == "port_deny" and r.get("port") == port
+                       and r.get("comment") == PROXY_TARGET_DENY_COMMENT for r in store.rules):
+                store.add({"type": "port_deny", "proto": "tcp", "port": port,
+                           "comment": PROXY_TARGET_DENY_COMMENT})
+            store.save()
+            self.server.nft.apply()
+            proxy_hint = f"；已同步 {len(synced)} 个反代目标端口到新端口，域名访问不受影响"
         # 延迟重启，响应先送达
         threading.Timer(1.5, restart_service).start()
         self._send(200, {"ok": True, "msg": f"面板端口已修改为 {port}，服务重启中，"
-                                            f"请用 http://<服务器IP>:{port} 访问"})
+                                            f"请用 http://<服务器IP>:{port} 访问{proxy_hint}"})
 
     def _api_username(self):
         """修改面板登录用户名"""

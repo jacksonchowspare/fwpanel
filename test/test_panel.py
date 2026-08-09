@@ -945,6 +945,43 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(code, 200, d)
         self.assertTrue(d.get("ok"))
 
+    def test_panel_port_syncs_proxy(self):
+        """修改面板端口：指向旧端口的反代自动同步 + 目标端口 deny 规则迁移"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        cur_port = int(self._req("GET", "/api/status", token=token)[1]["panel_port"])
+        code, d = self._req("POST", "/api/proxy",
+                            {"domain": "sync.example.com", "target_host": "127.0.0.1",
+                             "target_port": cur_port}, token=token)
+        self.assertEqual(code, 200, d)
+        new_port = cur_port + 1 if cur_port + 1 <= 65535 else cur_port - 1
+        real_restart = panel.restart_service
+        panel.restart_service = lambda: None   # 避免真的 systemctl restart
+        try:
+            code, d = self._req("POST", "/api/panel/port",
+                                {"port": new_port}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertIn("已同步", d["msg"])
+        finally:
+            panel.restart_service = real_restart
+        # 代理 target_port 已更新为新端口
+        code, d = self._req("GET", "/api/proxy", token=token)
+        p = [x for x in d["proxies"] if x["domain"] == "sync.example.com"][0]
+        self.assertEqual(p["target_port"], new_port)
+        # deny 规则迁移：新端口有、旧端口无
+        code, d = self._req("GET", "/api/rules", token=token)
+        self.assertTrue(any(r.get("type") == "port_deny" and r.get("port") == new_port
+                            and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT
+                            for r in d["rules"]), "新端口应有目标端口禁止规则")
+        self.assertFalse(any(r.get("type") == "port_deny" and r.get("port") == cur_port
+                             and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT
+                             for r in d["rules"]), "旧端口禁止规则应已迁移")
+        # 清理：删代理 + 恢复端口
+        self._req("DELETE", "/api/proxy/" + p["id"], token=token)
+        self._req("POST", "/api/panel/port", {"port": cur_port}, token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
