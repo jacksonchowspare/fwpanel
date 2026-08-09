@@ -60,6 +60,8 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
   .svc .desc { font-size: 11px; }
   /* ≥16px 防止 iOS/移动端输入框聚焦自动放大 */
   input, select { font-size: 16px; padding: 6px 9px; }
+  /* 登录框 17px：避开 iOS 26 聚焦智能缩放阈值（16px 仍会触发） */
+  #lg_user, #lg_pass { font-size: 17px; }
   .btn { font-size: 13px; padding: 6px 10px; }
   .btn.mini { font-size: 11px; padding: 3px 7px; }
 }
@@ -448,8 +450,19 @@ async function login() {
     const d = await api("POST", "/api/login", { username: $("lg_user").value, password: $("lg_pass").value });
     token = d.token; localStorage.setItem("fw_token", token);
     if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
-      // iOS：整页刷新复位 Safari 聚焦放大残留（新文档加载必然恢复 100% 缩放，token 已存本地自动登录）
-      location.reload();
+      // iOS 26 聚焦智能缩放残留修复：
+      // 1) 主动失焦，触发 iOS 自动恢复缩放
+      if (document.activeElement) document.activeElement.blur();
+      await new Promise(r => setTimeout(r, 250));
+      // 2) 兜底：若 scale 仍 >1，临时锁 maximum-scale 强制复位（随后释放）
+      if (window.visualViewport && window.visualViewport.scale > 1.01) {
+        const vp = document.querySelector('meta[name="viewport"]');
+        if (vp) {
+          vp.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1.0");
+          setTimeout(() => { vp.setAttribute("content", "width=device-width, initial-scale=1.0"); }, 300);
+        }
+      }
+      showMain(); refreshAll(); toast("登录成功", "okk");
       return;
     }
     showMain(); refreshAll(); toast("登录成功", "okk");
