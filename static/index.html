@@ -95,6 +95,7 @@ tr:hover td { background: #1d2733; }
 .switch input:checked + .slider { background: var(--accent2); }
 .switch input:checked + .slider::before { transform: translateX(18px); }
 .svc { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed var(--border); }
+.svc-btns { display: flex; gap: 6px; }
 .svc:last-child { border-bottom: 0; }
 .svc .name { font-weight: 500; } .svc .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
 .svc .cs-port { width: 72px; padding: 4px 8px; font-size: 12px; margin-left: 8px; }
@@ -1046,11 +1047,19 @@ async function renderSvc() {
   const list = $("svc_list"); list.innerHTML = "";
   for (const [name, port, proto, label] of SVCS) {
     const p = (name === "ssh") ? sshPort : port;   // SSH 端口跟随当前保护端口
-    // SSH 保护规则由后端渲染时动态生成（防锁死，永远生效），开关常显开启且不可关闭
+    // SSH 保护规则由后端渲染时动态生成（防锁死，永远生效），显示保护状态无操作按钮
     const on = name === "ssh" ? true : rules.some(r => r.type === "port_allow" && r.port == p && (r.proto === proto || r.proto === "both"));
     const row = document.createElement("div"); row.className = "svc";
-    row.innerHTML = `<span><span class="name">${label}</span><span class="desc">${p}/${proto}</span></span>
-      <label class="switch"><input type="checkbox" ${on ? "checked" : ""} ${name === "ssh" ? "disabled" : ""} onchange="toggleSvc('${name}', this.checked)"><span class="slider"></span></label>`;
+    if (name === "ssh") {
+      row.innerHTML = `<span><span class="name">${label}</span><span class="desc">${p}/${proto}</span></span>
+        <span class="desc" style="color:var(--accent2)">🔒 保护中（跟随 SSH 端口，不可关闭）</span>`;
+    } else {
+      row.innerHTML = `<span><span class="name">${label}</span><span class="desc">${p}/${proto}</span></span>
+        <span class="svc-btns">
+          <button class="btn mini" onclick="svcAllow('${name}')" ${on ? "disabled" : ""}>放行</button>
+          <button class="btn mini danger" onclick="svcClose('${name}')" ${on ? "" : "disabled"}>关闭</button>
+        </span>`;
+    }
     list.appendChild(row);
   }
   for (const [name, label] of CUSTOM_SVCS) {
@@ -1062,37 +1071,51 @@ async function renderSvc() {
     const on = !!svcRule;
     const row = document.createElement("div"); row.className = "svc";
     row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="${p || ""}" oninput="csPortChanged('${name}')"><select id="cs_proto_${name}" class="cs-proto" onchange="csPortChanged('${name}')"><option value="tcp"${proto === "tcp" ? " selected" : ""}>TCP</option><option value="udp"${proto === "udp" ? " selected" : ""}>UDP</option></select></span>
-      <label class="switch"><input type="checkbox" id="cs_sw_${name}" ${on ? "checked" : ""} onchange="toggleCustomSvc('${name}', this.checked)"><span class="slider"></span></label>`;
+      <span class="svc-btns">
+        <button class="btn mini" onclick="svcCusAllow('${name}')" ${on ? "disabled" : ""}>放行</button>
+        <button class="btn mini danger" onclick="svcCusClose('${name}')" ${on ? "" : "disabled"}>关闭</button>
+      </span>`;
     list.appendChild(row);
   }
 }
-async function toggleSvc(name, on) {
-  try { await api("POST", "/api/service", { name, enabled: on }); toast(`服务 ${name} 已${on ? "放行" : "拒绝"}`, "okk"); refreshAll(); }
-  catch (e) { toast(e.message, "err"); refreshAll(); }
+async function svcAllow(name) {
+  try { await api("POST", "/api/service", { name, enabled: true }); toast("已放行", "okk"); refreshAll(); }
+  catch (e) { toast(e.message, "err"); }
 }
-async function toggleCustomSvc(name, on) {
+async function svcClose(name) {
+  confirmPanel(`确认关闭服务？\n\n将删除该端口（80/443/53）的放行规则，公网将无法访问。`, () => {
+    api("POST", "/api/service", { name, enabled: false }).then(d => {
+      toast("已关闭", "okk"); refreshAll();
+    }).catch(e => toast(e.message, "err"));
+  }, "🚫 关闭服务");
+}
+async function svcCusAllow(name) {
   const p = customSvcPort(name);
   const proto = $("cs_proto_" + name).value;
-  if (!(p >= 1 && p <= 65535)) { toast("请先填写有效端口（1-65535）", "err"); csPortChanged(name); return; }
+  if (!(p >= 1 && p <= 65535)) { toast("请先填写有效端口（1-65535）", "err"); return; }
   const label = (CUSTOM_SVCS.find(x => x[0] === name) || ["", name])[1];
   try {
-    if (on) {
-      const d = await api("POST", "/api/open-port", { port: p, proto, comment: "服务:" + label });
-      toast(d.msg || `${label} ${proto.toUpperCase()} ${p} 已放行`, "okk");
-    } else {
-      // 删除该服务注释的全部规则（含改端口后残留的旧端口规则）
-      const rules = (await api("GET", "/api/rules")).rules;
-      const mine = rules.filter(x => x.type === "port_allow" && x.comment === "服务:" + label && !x.protected);
+    const d = await api("POST", "/api/open-port", { port: p, proto, comment: "服务:" + label });
+    toast(d.msg || `${label} ${proto.toUpperCase()} ${p} 已放行`, "okk");
+    refreshAll();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function svcCusClose(name) {
+  const p = customSvcPort(name);
+  const label = (CUSTOM_SVCS.find(x => x[0] === name) || ["", name])[1];
+  const proto = ($("cs_proto_" + name) && $("cs_proto_" + name).value) || "tcp";
+  confirmPanel(`确认关闭 ${label}？\n\n将删除该服务的全部放行规则（含改端口后残留的旧端口规则）。`, () => {
+    api("GET", "/api/rules").then(async d => {
+      const mine = d.rules.filter(x => x.type === "port_allow" && x.comment === "服务:" + label && !x.protected);
       for (const r of mine) await api("DELETE", "/api/rules/" + r.id);
       if (!mine.length) {
         // 兼容旧规则（「面板开放」注释）：按端口+协议删除
-        const r = rules.find(x => x.type === "port_allow" && x.port == p && x.proto === proto && !x.protected);
+        const r = d.rules.find(x => x.type === "port_allow" && x.port == p && x.proto === proto && !x.protected);
         if (r) await api("DELETE", "/api/rules/" + r.id);
       }
-      toast(`${label} 已收回`, "okk");
-    }
-    refreshAll();   // 刷新整个服务开关面板（端口显示 + 开关状态）
-  } catch (e) { toast(e.message, "err"); csPortChanged(name); }
+      toast(`${label} 已关闭`, "okk"); refreshAll();
+    }).catch(e => toast(e.message, "err"));
+  }, "🚫 关闭服务");
 }
 
 /* ---------- 模式 ---------- */
