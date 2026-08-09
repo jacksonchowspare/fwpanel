@@ -549,21 +549,23 @@ async function refreshAll() {
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
 
+/* ---------- 证书自动续期状态（证书模块 + 反代模块共用） ---------- */
+function fmtRenew(r) {
+  if (!r) return "";
+  return r.enabled
+    ? ` · 自动续期 ✅（${r.via}${r.next ? "，下次检测 " + r.next : ""}）`
+    : ` · ⚠ 自动续期未启用：${r.reason || "未知"}`;
+}
+
 /* ---------- 单独申请 SSL 证书 ---------- */
 async function loadCerts() {
   try {
     const d = await api("GET", "/api/cert");
     const st = $("cert_status");
     st.style.color = "";
-    let renewTxt = "";
-    if (d.renew) {
-      renewTxt = d.renew.enabled
-        ? ` · 自动续期 ✅（${d.renew.via}${d.renew.next ? "，下次 " + d.renew.next : ""}）`
-        : ` · ⚠ 自动续期未启用：${d.renew.reason || "未知"}`;
-    }
     st.textContent = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（需先一键安装）")
       + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装")
-      + renewTxt;
+      + fmtRenew(d.renew);
     const tbody = $("cert_rows"); tbody.innerHTML = "";
     if (!d.certs.length) { tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">暂无独立申请记录</td></tr>'; return; }
     for (const c of d.certs) {
@@ -682,7 +684,8 @@ async function loadProxy() {
     const st = $("proxy_status");
     st.innerHTML = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装")
       + (d.active ? " · 运行中" : " · 未运行")
-      + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装");
+      + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装")
+      + fmtRenew(d.renew);
     $("px_install_row").style.display = (d.installed && d.certbot) ? "none" : "flex";
     const tbody = $("proxy_rows"); tbody.innerHTML = "";
     // 搜索过滤

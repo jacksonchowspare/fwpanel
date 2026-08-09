@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.23.13"
+CURRENT_VERSION = "1.23.14"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -934,10 +934,37 @@ def cert_files_exist(domain):
     return os.path.isfile(os.path.join(LE_LIVE, domain, "fullchain.pem"))
 
 
+def _fmt_next_check(next_raw):
+    """把下次检测时间格式化为「xxxx年xx月xx日 星期几」"""
+    try:
+        from datetime import datetime
+        # systemctl show 输出的 epoch 微秒
+        if next_raw and next_raw.isdigit():
+            dt = datetime.fromtimestamp(int(next_raw) / 1e6)
+            return f"{dt.year}年{dt.month}月{dt.day}日 星期{'一二三四五六日'[dt.weekday()]}"
+    except Exception:
+        pass
+    return next_raw or ""
+
+
 def cert_renew_status():
     """检测 certbot 自动续期状态：systemd timer / cron 任务"""
     if not certbot_available():
         return {"enabled": False, "via": "", "next": "", "reason": "certbot 未安装"}
+    try:
+        r = subprocess.run(["systemctl", "show", "certbot.timer",
+                            "-p", "NextElapseUSecRealtime", "-p", "ActiveState"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and "certbot.timer" in r.stdout or "ActiveState=active" in r.stdout:
+            usec = ""
+            for line in r.stdout.splitlines():
+                if line.startswith("NextElapseUSecRealtime="):
+                    usec = line.split("=", 1)[1].strip()
+            if usec and usec != "0":
+                return {"enabled": True, "via": "systemd timer",
+                        "next": _fmt_next_check(usec), "reason": ""}
+    except Exception:
+        pass
     try:
         r = subprocess.run(["systemctl", "list-timers", "certbot.timer", "--no-pager"],
                            capture_output=True, text=True, timeout=10)
@@ -946,8 +973,7 @@ def cert_renew_status():
                 if "certbot.timer" in line:
                     parts = line.split()
                     return {"enabled": True, "via": "systemd timer",
-                            "next": (parts[0] + " " + parts[1]) if len(parts) >= 2 else "",
-                            "reason": ""}
+                            "next": _fmt_next_check(" ".join(parts[0:2])), "reason": ""}
     except Exception:
         pass
     if os.path.exists("/etc/cron.d/certbot"):
@@ -2092,6 +2118,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             "installed": nginx_available(),
             "active": nginx_active(),
             "certbot": certbot_available(),
+            "renew": cert_renew_status(),
             "proxies": items,
         })
 
