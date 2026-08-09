@@ -1054,9 +1054,12 @@ async function renderSvc() {
     list.appendChild(row);
   }
   for (const [name, label] of CUSTOM_SVCS) {
-    const p = customSvcPort(name);
-    const proto = ($("cs_proto_" + name) && $("cs_proto_" + name).value) || "tcp";
-    const on = p ? rules.some(r => r.type === "port_allow" && r.port == p && (r.proto === proto || r.proto === "both")) : false;
+    // 从规则反查该服务已放行的端口（注释「服务:标签」关联，刷新后仍能显示）
+    const svcRules = rules.filter(r => r.type === "port_allow" && r.comment === "服务:" + label);
+    const svcRule = svcRules[svcRules.length - 1] || null;
+    const p = svcRule ? svcRule.port : customSvcPort(name);
+    const proto = svcRule ? svcRule.proto : (($("cs_proto_" + name) && $("cs_proto_" + name).value) || "tcp");
+    const on = !!svcRule;
     const row = document.createElement("div"); row.className = "svc";
     row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="${p || ""}" oninput="csPortChanged('${name}')"><select id="cs_proto_${name}" class="cs-proto" onchange="csPortChanged('${name}')"><option value="tcp"${proto === "tcp" ? " selected" : ""}>TCP</option><option value="udp"${proto === "udp" ? " selected" : ""}>UDP</option></select></span>
       <label class="switch"><input type="checkbox" id="cs_sw_${name}" ${on ? "checked" : ""} onchange="toggleCustomSvc('${name}', this.checked)"><span class="slider"></span></label>`;
@@ -1071,17 +1074,24 @@ async function toggleCustomSvc(name, on) {
   const p = customSvcPort(name);
   const proto = $("cs_proto_" + name).value;
   if (!(p >= 1 && p <= 65535)) { toast("请先填写有效端口（1-65535）", "err"); csPortChanged(name); return; }
+  const label = (CUSTOM_SVCS.find(x => x[0] === name) || ["", name])[1];
   try {
     if (on) {
-      const d = await api("POST", "/api/open-port", { port: p, proto });
-      toast(d.msg || `${name} ${proto.toUpperCase()} ${p} 已放行`, "okk");
+      const d = await api("POST", "/api/open-port", { port: p, proto, comment: "服务:" + label });
+      toast(d.msg || `${label} ${proto.toUpperCase()} ${p} 已放行`, "okk");
     } else {
+      // 删除该服务注释的全部规则（含改端口后残留的旧端口规则）
       const rules = (await api("GET", "/api/rules")).rules;
-      const r = rules.find(x => x.type === "port_allow" && x.port == p && x.proto === proto && !x.protected);
-      if (r) await api("DELETE", "/api/rules/" + r.id);
-      toast(`${name} ${proto.toUpperCase()} ${p} 已收回`, "okk");
+      const mine = rules.filter(x => x.type === "port_allow" && x.comment === "服务:" + label && !x.protected);
+      for (const r of mine) await api("DELETE", "/api/rules/" + r.id);
+      if (!mine.length) {
+        // 兼容旧规则（「面板开放」注释）：按端口+协议删除
+        const r = rules.find(x => x.type === "port_allow" && x.port == p && x.proto === proto && !x.protected);
+        if (r) await api("DELETE", "/api/rules/" + r.id);
+      }
+      toast(`${label} 已收回`, "okk");
     }
-    csPortChanged(name);
+    refreshAll();   // 刷新整个服务开关面板（端口显示 + 开关状态）
   } catch (e) { toast(e.message, "err"); csPortChanged(name); }
 }
 

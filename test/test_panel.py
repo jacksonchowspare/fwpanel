@@ -1070,6 +1070,29 @@ class TestAPI(unittest.TestCase):
         finally:
             panel.IPV6_SYSCTL, panel.GAI_CONF = real_s, real_g
 
+    def test_open_port_comment(self):
+        """开放端口支持自定义注释（服务开关用「服务:标签」区分规则）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        port = 31555
+        code, d = self._req("POST", "/api/open-port",
+                            {"port": port, "proto": "tcp", "comment": "服务:3X-UI"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        r = [x for x in d["rules"] if x.get("port") == port and x.get("type") == "port_allow"]
+        self.assertTrue(r and r[0].get("comment") == "服务:3X-UI", d)
+        # 幂等重开：注释更新
+        code, d = self._req("POST", "/api/open-port",
+                            {"port": port, "proto": "tcp", "comment": "服务:Reality"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        r = [x for x in d["rules"] if x.get("port") == port and x.get("type") == "port_allow"]
+        self.assertEqual(r[0].get("comment"), "服务:Reality", "幂等时应更新注释")
+        # 清理
+        self._req("DELETE", "/api/rules/" + r[0]["id"], token=token)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

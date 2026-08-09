@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.22.2"
+CURRENT_VERSION = "1.22.3"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -2321,13 +2321,17 @@ class PanelHandler(BaseHTTPRequestHandler):
         if not (1 <= port <= 65535):
             self._send(400, {"error": "端口范围 1-65535"})
             return
-        # 已放行则直接返回成功（幂等）
+        # 已放行则直接返回成功（幂等）；传入 comment 时更新注释便于识别
+        comment = str(data.get("comment", "")).strip() or "面板开放"
         for r in self.server.store.rules:
             if r.get("type") == "port_allow" and r.get("port") == port and r.get("proto") == proto:
+                if comment and r.get("comment") != comment:
+                    r["comment"] = comment
+                    self.server.store.save()
                 self._send(200, {"ok": True, "msg": f"端口 {port}/{proto} 已在放行列表中", "id": r["id"]})
                 return
         rule = self.server.store.add({"type": "port_allow", "proto": proto, "port": port,
-                                      "comment": "面板开放"})
+                                      "comment": comment})
         ok, msg = self.server.nft.apply()
         if not ok:
             self.server.store.remove(rule["id"])
