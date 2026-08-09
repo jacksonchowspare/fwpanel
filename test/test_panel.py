@@ -853,6 +853,33 @@ class TestAPI(unittest.TestCase):
         self.assertFalse(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.77"
                              for r in d["rules"]), "解封后不应有封禁规则")
 
+    def test_manual_ban_expires_removes_rule(self):
+        """手动封禁到期后：bans 记录与规则同时清理（回归：规则残留）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/bruteforce/ban",
+                            {"ip": "198.51.100.88"}, token=token)
+        self.assertEqual(code, 200, d)
+        # 把该 IP 的到期时间改为过去，触发一轮扫描
+        bans = panel.load_bans()
+        self.assertIn("198.51.100.88", bans)
+        bans["198.51.100.88"] = panel.time.time() - 1
+        panel.save_bans(bans)
+        code, d = self._req("POST", "/api/bruteforce",
+                            {"enabled": True}, token=token)
+        self.assertEqual(code, 200, d)
+        logs = panel.bruteforce_cycle(panel.Config().load(), panel.RuleStore())
+        self.assertTrue(any("198.51.100.88" in log for log in logs), logs)
+        # 规则应已删除（含手动封禁）——从磁盘重新读取（服务器运行时用自身 store，效果一致）
+        after = panel.RuleStore().rules
+        self.assertFalse(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.88"
+                             for r in after), "到期后规则应被清理")
+        # 清理
+        self._req("POST", "/api/bruteforce",
+                  {"enabled": False}, token=token)
+
     def test_close_port_api(self):
         """一键删除端口放行规则 API（按字母序在 full_flow 前，密码为初始值）"""
         code, d = self._req("POST", "/api/login",

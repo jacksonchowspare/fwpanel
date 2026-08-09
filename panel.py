@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.19.3"
+CURRENT_VERSION = "1.19.4"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -675,6 +675,7 @@ def apply_sshd_port(port):
 
 BANS_FILE = os.path.join(BASE_DIR, "bans.json")
 BAN_COMMENT = "SSH防爆破-自动封禁"
+MANUAL_BAN_COMMENT = "手动封禁"
 BF_DEFAULTS = {"enabled": False, "max_fails": 5, "ban_seconds": 3600, "fail_window": 300}
 
 
@@ -759,9 +760,10 @@ def bruteforce_cycle(config, store, now=None):
     expired = [ip for ip, until in bans.items() if until <= now]
     recently_unbanned = set()
     for ip in expired:
+        # 删除该 IP 的防爆破相关规则（自动封禁 + 手动封禁都到期解封）
         store.rules = [r for r in store.rules
                        if not (r.get("type") == "ip_deny" and r.get("ip") == ip
-                               and r.get("comment") == BAN_COMMENT)]
+                               and r.get("comment") in (BAN_COMMENT, MANUAL_BAN_COMMENT))]
         del bans[ip]
         recently_unbanned.add(ip)
         changed = True
@@ -1529,7 +1531,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         if any(r.get("type") == "ip_deny" and r.get("ip") == ip for r in store.rules):
             self._send(400, {"error": f"{ip} 已在封禁列表"})
             return
-        store.add({"type": "ip_deny", "ip": ip, "comment": "手动封禁"})
+        store.add({"type": "ip_deny", "ip": ip, "comment": MANUAL_BAN_COMMENT})
         # 写入封禁记录（显示在防爆破模块，带剩余时间）
         bans = load_bans()
         bans[ip] = int(time.time()) + bf_cfg(self.server.config)["ban_seconds"]
