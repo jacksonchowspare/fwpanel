@@ -1050,7 +1050,7 @@ class TestAPI(unittest.TestCase):
         """IPv6 API：查询 + 设置（隔离路径，不触碰真实 /etc）"""
         import tempfile
         code, d = self._req("POST", "/api/login",
-                            {"username": TEST_USER, "password": TEST_PASS})
+                            {"username": TEST_USER, "password": "NewPass123"})
         self.assertEqual(code, 200)
         token = d["token"]
         d0 = tempfile.mkdtemp()
