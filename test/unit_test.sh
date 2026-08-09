@@ -81,11 +81,10 @@ rm -f /tmp/install_funcs_up.sh
 rm -rf /tmp/fakebin
 
 echo "== do_upgrade 防降级（当前 ≥ 下载版本时跳过） =="
-head -n -1 "$SCRIPT" > /tmp/install_funcs_dg.sh
-bash -c 'source /tmp/install_funcs_dg.sh
 mkdir -p /tmp/fwpanel-dg-cur /tmp/fwpanel-dg-tmp
-echo '\''CURRENT_VERSION = "1.23.20"'\'' > /tmp/fwpanel-dg-cur/panel.py
-APP_DIR=/tmp/fwpanel-dg-cur
+echo 'CURRENT_VERSION = "1.23.20"' > /tmp/fwpanel-dg-cur/panel.py
+head -n -1 "$SCRIPT" | sed 's|readonly APP_DIR="/usr/local/lib/fwpanel"|readonly APP_DIR="/tmp/fwpanel-dg-cur"|' > /tmp/install_funcs_dg.sh
+bash -c 'source /tmp/install_funcs_dg.sh
 curl() {
   if [[ "$*" == *"/panel.py"* && "$*" == *"-o"* ]]; then
     echo '\''CURRENT_VERSION = "1.23.19"'\'' > "$(echo "$*" | grep -oP "(?<=-o )\S+")"
