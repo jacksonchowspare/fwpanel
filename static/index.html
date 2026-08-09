@@ -435,7 +435,8 @@ function $(id) { return document.getElementById(id); }
 function toast(msg, type) {
   const t = $("toast"); t.textContent = msg; t.className = type || "";
   t.style.display = "block";
-  clearTimeout(t._timer); t._timer = setTimeout(() => t.style.display = "none", 2500);
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.style.display = "none", (type === "err" ? 8000 : 3000));
 }
 /* 面板风格确认弹窗 */
 let cfmCallback = null;
@@ -536,7 +537,9 @@ async function refreshAll() {
 async function loadCerts() {
   try {
     const d = await api("GET", "/api/cert");
-    $("cert_status").textContent = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（需先一键安装）")
+    const st = $("cert_status");
+    st.style.color = "";
+    st.textContent = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（需先一键安装）")
       + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装");
     const tbody = $("cert_rows"); tbody.innerHTML = "";
     if (!d.certs.length) { tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">暂无独立申请记录</td></tr>'; return; }
@@ -560,11 +563,18 @@ async function addCert() {
   if (!domain) { toast("请输入域名", "err"); return; }
   const email = $("cert_email").value.trim();
   confirmPanel(`确认申请 ${domain} 的 SSL 证书？\n\ncertbot webroot 模式：需 80 端口公网可达、域名已解析到本机。\n申请约 10-60 秒，期间页面等待属正常。`, () => {
+    const st = $("cert_status");
+    st.textContent = "⏳ 正在申请，请稍候（最多 180 秒）...";
+    st.style.color = "";
     api("POST", "/api/cert", { domain, email }).then(d => {
       toast(d.msg || "证书已签发", "okk");
       $("cert_domain").value = ""; $("cert_email").value = "";
       loadCerts();
-    }).catch(e => toast(e.message, "err"));
+    }).catch(e => {
+      toast(e.message, "err");
+      st.textContent = "❌ 申请失败：" + e.message;
+      st.style.color = "var(--danger)";
+    });
   }, "🔐 申请证书");
 }
 function renewCertSolo(domain) {
