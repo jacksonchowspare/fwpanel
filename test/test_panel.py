@@ -982,6 +982,47 @@ class TestAPI(unittest.TestCase):
         self._req("DELETE", "/api/proxy/" + p["id"], token=token)
         self._req("POST", "/api/panel/port", {"port": cur_port}, token=token)
 
+    def test_cert_api(self):
+        """独立证书 API：申请/列表/续期/移除（mock issue_cert/renew_cert）"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        if os.path.exists(panel.CERT_FILE):
+            os.remove(panel.CERT_FILE)
+        real_issue, real_renew, real_nginx = panel.issue_cert, panel.renew_cert, panel.nginx_available
+        panel.issue_cert = lambda dom, email: (True, "证书已签发")
+        panel.renew_cert = lambda dom: (True, "证书已续期")
+        panel.nginx_available = lambda: True
+        try:
+            # 申请
+            code, d = self._req("POST", "/api/cert",
+                                {"domain": "solo.example.com", "email": "a@b.com"}, token=token)
+            self.assertEqual(code, 200, d)
+            # 列表
+            code, d = self._req("GET", "/api/cert", token=token)
+            self.assertEqual(code, 200)
+            self.assertEqual(len(d["certs"]), 1)
+            self.assertEqual(d["certs"][0]["domain"], "solo.example.com")
+            # 续期
+            code, d = self._req("POST", "/api/cert/solo.example.com",
+                                {"action": "renew"}, token=token)
+            self.assertEqual(code, 200, d)
+            # 移除
+            code, d = self._req("POST", "/api/cert/solo.example.com",
+                                {"action": "delete"}, token=token)
+            self.assertEqual(code, 200, d)
+            code, d = self._req("GET", "/api/cert", token=token)
+            self.assertEqual(len(d["certs"]), 0)
+            # 非法域名
+            code, d = self._req("POST", "/api/cert",
+                                {"domain": "bad domain!"}, token=token)
+            self.assertEqual(code, 400)
+        finally:
+            panel.issue_cert, panel.renew_cert, panel.nginx_available = real_issue, real_renew, real_nginx
+            if os.path.exists(panel.CERT_FILE):
+                os.remove(panel.CERT_FILE)
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

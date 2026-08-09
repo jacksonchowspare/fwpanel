@@ -195,6 +195,23 @@ tr:hover td { background: #1d2733; }
       </div>
     </div>
 
+    <div class="panel">
+      <h2>🔐 单独申请 SSL 证书</h2>
+      <div id="cert_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <input id="cert_domain" placeholder="域名（如 example.com，不含 http）" style="width:200px">
+        <input id="cert_email" placeholder="邮箱（到期通知，可留空）" style="width:180px">
+        <button class="btn" onclick="addCert()">申请证书</button>
+      </div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:10px">certbot webroot 模式：需 80 端口公网可达、域名已解析到本机、nginx 已安装（未装可先在反向代理模块一键安装）</div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>域名</th><th>有效期</th><th>操作</th></tr></thead>
+        <tbody id="cert_rows"><tr><td colspan="3" style="color:var(--muted)">暂无独立申请记录</td></tr></tbody>
+      </table>
+      </div>
+    </div>
+
     <div class="grid2">
       <div class="col">
         <div class="panel">
@@ -511,8 +528,68 @@ async function refreshAll() {
     $("panel_port_input").value = status.panel_port || "";
     $("mode_sel").value = status.mode;
     $("st_ver").textContent = "v" + status.version;
-    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadBbr(); autoCheckUpgrade();
+    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+/* ---------- 单独申请 SSL 证书 ---------- */
+async function loadCerts() {
+  try {
+    const d = await api("GET", "/api/cert");
+    $("cert_status").textContent = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（需先一键安装）")
+      + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装");
+    const tbody = $("cert_rows"); tbody.innerHTML = "";
+    if (!d.certs.length) { tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">暂无独立申请记录</td></tr>'; return; }
+    for (const c of d.certs) {
+      const tr = document.createElement("tr");
+      const exp = c.cert_exists
+        ? (c.cert_expiry ? `有效至 ${new Date(c.cert_expiry * 1000).toLocaleDateString()}` : "已签发")
+        : "未签发";
+      tr.innerHTML = `<td>${c.domain}</td><td style="color:var(--muted);font-size:12px">${exp}</td>
+        <td>
+          <button class="btn mini ghost" onclick="renewCertSolo('${c.domain}')">手动续期</button>
+          <button class="btn mini ghost" onclick="showCertPathsSolo('${c.domain}')">显示路径</button>
+          <button class="btn mini danger" onclick="delCert('${c.domain}')">移除</button>
+        </td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) { /* 静默 */ }
+}
+async function addCert() {
+  const domain = $("cert_domain").value.trim();
+  if (!domain) { toast("请输入域名", "err"); return; }
+  const email = $("cert_email").value.trim();
+  confirmPanel(`确认申请 ${domain} 的 SSL 证书？\n\ncertbot webroot 模式：需 80 端口公网可达、域名已解析到本机。\n申请约 10-60 秒，期间页面等待属正常。`, () => {
+    api("POST", "/api/cert", { domain, email }).then(d => {
+      toast(d.msg || "证书已签发", "okk");
+      $("cert_domain").value = ""; $("cert_email").value = "";
+      loadCerts();
+    }).catch(e => toast(e.message, "err"));
+  }, "🔐 申请证书");
+}
+function renewCertSolo(domain) {
+  confirmPanel(`确认手动续期 ${domain} 的证书？\n\n将强制重新签发（绕过自动续期），需要 80 端口可访问。`, () => {
+    api("POST", "/api/cert/" + domain, { action: "renew" }).then(d => {
+      toast(d.msg || "续期成功", "okk"); loadCerts();
+    }).catch(e => toast(e.message, "err"));
+  }, "🔄 续期确认");
+}
+function delCert(domain) {
+  confirmPanel(`确认将 ${domain} 从独立证书列表移除？\n\n仅移除记录，证书文件保留（其他服务可继续引用）。`, () => {
+    api("POST", "/api/cert/" + domain, { action: "delete" }).then(d => {
+      toast(d.msg || "已移除", "okk"); loadCerts();
+    }).catch(e => toast(e.message, "err"));
+  }, "🗑 移除证书");
+}
+async function showCertPathsSolo(domain) {
+  try {
+    const d = await api("GET", "/api/cert");
+    const c = d.certs.find(x => x.domain === domain);
+    if (!c || !c.cert_path) { toast("该证书文件不存在", "err"); return; }
+    $("pm_cert").textContent = c.cert_path;
+    $("pm_key").textContent = c.key_path;
+    $("path_modal").classList.remove("hidden");
+  } catch (e) { toast(e.message, "err"); }
 }
 
 /* ---------- BBR ---------- */

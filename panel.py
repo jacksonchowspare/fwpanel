@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.20.12"
+CURRENT_VERSION = "1.21.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -808,9 +808,31 @@ def bruteforce_loop(config, store, interval=30):
 # ------------------------------- 反向代理（Nginx） -------------------------------
 
 PROXIES_FILE = os.path.join(BASE_DIR, "proxies.json")
+CERT_FILE = os.path.join(BASE_DIR, "certificates.json")
 ACME_WEBROOT = "/var/www/fwpanel-acme"
 LE_LIVE = "/etc/letsencrypt/live"
 PROXY_TARGET_DENY_COMMENT = "反代目标端口-禁止公网直连"
+
+
+def load_cert_store():
+    """独立申请的证书记录：{domain: email}"""
+    try:
+        with open(CERT_FILE) as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_cert_store(store):
+    try:
+        os.makedirs(BASE_DIR, exist_ok=True)
+        tmp = CERT_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(store, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, CERT_FILE)
+    except OSError:
+        pass
 
 
 class ProxyStore:
@@ -1275,6 +1297,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._serve_static("favicon.ico")
         elif path == "/api/bbr":
             self._api_bbr()
+        elif path == "/api/cert":
+            self._api_cert()
+        elif path.startswith("/api/cert/"):
+            self._api_cert_action(path.rsplit("/", 1)[1])
         elif path == "/api/status":
             self._api_status()
         elif path == "/api/upgrade/check":
@@ -1336,6 +1362,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_bruteforce_unban(path.rsplit("/", 1)[1])
         elif path == "/api/firewall":
             self._api_firewall()
+        elif path == "/api/cert":
+            self._api_cert_add()
+        elif path.startswith("/api/cert/"):
+            self._api_cert_action(path.rsplit("/", 1)[1])
         elif path == "/api/proxy":
             self._api_proxy_add()
         elif path == "/api/proxy/install":
@@ -1768,6 +1798,76 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(500, {"error": f"nginx 配置写入失败: {msg2}"})
             return
         self._send(200, {"ok": True, "msg": f"安装完成（{', '.join(todo) or '已是最新'}）；{msg2}"})
+
+    def _api_cert(self):
+        """独立证书列表：域名、邮箱、有效期、路径"""
+        token = self._require_auth()
+        if token is None:
+            return
+        store = load_cert_store()
+        items = []
+        for domain, email in store.items():
+            item = {"domain": domain, "email": email,
+                    "cert_exists": cert_files_exist(domain),
+                    "cert_expiry": cert_status(domain)}
+            if item["cert_exists"]:
+                item["cert_path"] = f"{LE_LIVE}/{domain}/fullchain.pem"
+                item["key_path"] = f"{LE_LIVE}/{domain}/privkey.pem"
+            items.append(item)
+        self._send(200, {
+            "installed": nginx_available(),
+            "certbot": certbot_available(),
+            "certs": items,
+        })
+
+    def _api_cert_add(self):
+        """单独申请 SSL 证书：{domain, email?}（certbot webroot，需 80 可达）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        domain = str(data.get("domain", "")).strip().lower()
+        email = str(data.get("email", "")).strip()
+        if not re.match(r"^[a-zA-Z0-9.\-*]+$", domain) or not domain:
+            self._send(400, {"error": "域名格式无效（如 example.com 或 *.example.com）"})
+            return
+        if not nginx_available():
+            self._send(400, {"error": "未安装 nginx，请先在反向代理模块一键安装（ACME 挑战需要）"})
+            return
+        ensure_nginx_default()   # 确保 80 挑战路径兜底配置存在
+        ok, msg = issue_cert(domain, email)
+        if not ok:
+            self._send(500, {"error": msg})
+            return
+        store = load_cert_store()
+        store[domain] = email
+        save_cert_store(store)
+        self._send(200, {"ok": True, "msg": f"{domain} 证书已签发"})
+
+    def _api_cert_action(self, suffix):
+        """证书操作：POST /api/cert/<domain> {action: renew|delete}"""
+        token = self._require_auth()
+        if token is None:
+            return
+        domain = suffix.strip().lower()
+        data = self._read_json()
+        action = str(data.get("action", ""))
+        store = load_cert_store()
+        if domain not in store:
+            self._send(400, {"error": "该域名不在独立证书列表中"})
+            return
+        if action == "renew":
+            ok, msg = renew_cert(domain)
+            if not ok:
+                self._send(500, {"error": msg})
+                return
+            self._send(200, {"ok": True, "msg": f"{domain} 证书已续期"})
+        elif action == "delete":
+            del store[domain]
+            save_cert_store(store)
+            self._send(200, {"ok": True, "msg": f"{domain} 已从列表移除（证书文件保留，供服务引用）"})
+        else:
+            self._send(400, {"error": "action 必须是 renew 或 delete"})
 
     def _api_proxy(self):
         """查询反向代理列表与 nginx/certbot 状态"""
