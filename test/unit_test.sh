@@ -69,14 +69,14 @@ bash -c 'PATH=/tmp/fakebin:$PATH
 source /tmp/install_funcs_up.sh
 do_upgrade() { echo "UPGRADE_CALLED"; exit 0; }
 out=$(check_existing)
-echo "$out" | grep -q UPGRADE_CALLED && ok "已安装 → 进入升级流程" || bad "未进入升级: $out"'
+if echo "$out" | grep -q UPGRADE_CALLED; then echo "  ✓ 已安装 → 进入升级流程"; else echo "  ✗ 未进入升级: $out"; exit 1; fi'
 
 echo "== check_existing 体检模式已安装不升级 =="
 bash -c 'PATH=/tmp/fakebin:$PATH
 source /tmp/install_funcs_up.sh
 do_upgrade() { echo "UPGRADE_CALLED"; exit 0; }
 out=$(check_existing check)
-echo "$out" | grep -q UPGRADE_CALLED && bad "体检模式不应升级" || ok "体检模式跳过升级"'
+if echo "$out" | grep -q UPGRADE_CALLED; then echo "  ✗ 体检模式不应升级"; exit 1; else echo "  ✓ 体检模式跳过升级"; fi'
 rm -f /tmp/install_funcs_up.sh
 rm -rf /tmp/fakebin
 

@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.22.15"
+readonly SCRIPT_VERSION="1.22.16"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -144,7 +144,7 @@ check_tools() {
 
 check_existing() {
     if [ -f "$APP_DIR/panel.py" ] || systemctl list-unit-files 2>/dev/null | grep -q "$SERVICE_NAME"; then
-        if [ "$1" = "check" ]; then
+        if [ "${1:-}" = "check" ]; then
             log_warn "检测到 fwpanel 已安装（体检模式跳过安装）。"
             log_info "重跑安装脚本可升级到最新版: curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash"
             exit 0
