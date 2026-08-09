@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.22.13"
+readonly SCRIPT_VERSION="1.22.14"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -144,16 +144,62 @@ check_tools() {
 
 check_existing() {
     if [ -f "$APP_DIR/panel.py" ] || systemctl list-unit-files 2>/dev/null | grep -q "$SERVICE_NAME"; then
-        log_warn "检测到 fwpanel 已安装，跳过安装。"
-        log_info "查看服务: systemctl status $SERVICE_NAME"
-        log_info "重置密码: sudo bash $0 --change-password"
+        if [ "$1" = "check" ]; then
+            log_warn "检测到 fwpanel 已安装（体检模式跳过安装）。"
+            log_info "重跑安装脚本可升级到最新版: curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash"
+            exit 0
+        fi
+        log_info "检测到 fwpanel 已安装，执行升级（保留配置/规则/代理）..."
+        do_upgrade
         exit 0
     fi
 }
 
+do_upgrade() {
+    local tmpdir base_url
+    tmpdir=$(mktemp -d)
+    base_url="https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main"
+    log_info "下载最新版本..."
+    if ! curl -fsSL "$base_url/panel.py" -o "$tmpdir/panel.py" 2>/dev/null || [ ! -s "$tmpdir/panel.py" ]; then
+        log_err "下载 panel.py 失败，请检查服务器网络后重试"
+        rm -rf "$tmpdir"
+        exit 1
+    fi
+    curl -fsSL "$base_url/static/index.html" -o "$tmpdir/index.html" 2>/dev/null || true
+    curl -fsSL "$base_url/install.sh" -o "$tmpdir/install.sh" 2>/dev/null || true
+    # 备份当前版本（保留最近 3 份）
+    local bak
+    bak="$APP_DIR/panel.py.bak.$(date +%Y%m%d%H%M%S)"
+    cp "$APP_DIR/panel.py" "$bak" 2>/dev/null && log_info "已备份旧版本: $bak"
+    ls -t "$APP_DIR"/panel.py.bak.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    # 覆盖安装
+    cp "$tmpdir/panel.py" "$APP_DIR/panel.py"
+    if [ -s "$tmpdir/index.html" ]; then
+        mkdir -p "$APP_DIR/static"
+        cp "$tmpdir/index.html" "$APP_DIR/static/index.html"
+    fi
+    if [ -s "$tmpdir/install.sh" ]; then
+        cp "$tmpdir/install.sh" "$0" 2>/dev/null || true
+    fi
+    rm -rf "$tmpdir"
+    # 语法校验
+    if ! python3 -m py_compile "$APP_DIR/panel.py" 2>/dev/null; then
+        log_err "新版本语法错误，正在回滚备份..."
+        cp "$bak" "$APP_DIR/panel.py" 2>/dev/null
+        exit 1
+    fi
+    # 重启服务
+    if systemctl list-unit-files 2>/dev/null | grep -q "$SERVICE_NAME"; then
+        systemctl restart "$SERVICE_NAME" 2>/dev/null && log_info "服务已重启: $SERVICE_NAME"
+    else
+        log_warn "未找到 systemd 服务，请手动重启面板"
+    fi
+    log_info "升级完成 ✓ 配置/规则已保留；页面请强制刷新（Ctrl+F5）"
+}
+
 do_check() {
     echo "================== $SCRIPT_NAME v$SCRIPT_VERSION 环境体检 =================="
-    check_os; check_root; check_arch; check_tools; check_existing
+    check_os; check_root; check_arch; check_tools; check_existing check
     echo "==========================================================================="
     echo "体检通过，可执行: sudo bash $0"
 }
