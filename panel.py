@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.23.17"
+CURRENT_VERSION = "1.23.18"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -489,8 +489,8 @@ def get_latest_version():
 
 
 def download_panel_files(tag, tmpdir):
-    """按版本号下载 panel.py / index.html / favicon.ico 到临时目录；
-    返回 (py_path, html_path, ico_path 或 None) 或 None"""
+    """按版本号下载 panel.py / index.html / github-logo.png / favicon.ico 到临时目录；
+    返回 (py_path, html_path, logo_path 或 None, ico_path 或 None) 或 None"""
     ok, py_path = False, os.path.join(tmpdir, "panel.py")
     for tpl in UPGRADE_SOURCES:
         if http_download(tpl.format(tag=tag, path="panel.py"), py_path):
@@ -505,13 +505,19 @@ def download_panel_files(tag, tmpdir):
             break
     if not ok:
         return None
-    ico_path = os.path.join(tmpdir, "favicon.ico")
+    logo_path = os.path.join(tmpdir, "github-logo.png")
     ok = False
     for tpl in UPGRADE_SOURCES:
-        if http_download(tpl.format(tag=tag, path="static/favicon.ico"), ico_path):
+        if http_download(tpl.format(tag=tag, path="static/github-logo.png"), logo_path):
             ok = True
             break
-    return py_path, html_path, (ico_path if ok else None)
+    ico_path = os.path.join(tmpdir, "favicon.ico")
+    ok2 = False
+    for tpl in UPGRADE_SOURCES:
+        if http_download(tpl.format(tag=tag, path="static/favicon.ico"), ico_path):
+            ok2 = True
+            break
+    return py_path, html_path, (logo_path if ok else None), (ico_path if ok2 else None)
 
 
 def perform_upgrade():
@@ -526,14 +532,16 @@ def perform_upgrade():
     backup_py = os.path.join(APP_DIR, "panel.py.bak")
     backup_html = os.path.join(APP_DIR, "static", "index.html.bak")
     backup_ico = os.path.join(APP_DIR, "static", "favicon.ico.bak")
+    backup_logo = os.path.join(APP_DIR, "static", "github-logo.png.bak")
     panel_py = os.path.join(APP_DIR, "panel.py")
     panel_html = os.path.join(APP_DIR, "static", "index.html")
     panel_ico = os.path.join(APP_DIR, "static", "favicon.ico")
+    panel_logo = os.path.join(APP_DIR, "static", "github-logo.png")
     try:
         files = download_panel_files(latest, tmpdir)
         if not files:
             return False, "下载新版文件失败，请检查网络"
-        new_py, new_html, new_ico = files
+        new_py, new_html, new_logo, new_ico = files
         # 校验：新版 panel.py 必须语法通过，且版本号确实更新
         try:
             import py_compile
@@ -553,10 +561,14 @@ def perform_upgrade():
         shutil.copy2(panel_html, backup_html)
         if os.path.exists(panel_ico):
             shutil.copy2(panel_ico, backup_ico)
+        if os.path.exists(panel_logo):
+            shutil.copy2(panel_logo, backup_logo)
         # 替换
         os.chmod(new_py, 0o755)
         shutil.copy2(new_py, panel_py)
         shutil.copy2(new_html, panel_html)
+        if new_logo and os.path.exists(new_logo):
+            shutil.copy2(new_logo, panel_logo)
         if new_ico and os.path.exists(new_ico):
             shutil.copy2(new_ico, panel_ico)
     except Exception as e:
@@ -566,6 +578,8 @@ def perform_upgrade():
                 shutil.copy2(backup_py, panel_py)
             if os.path.exists(backup_html):
                 shutil.copy2(backup_html, panel_html)
+            if os.path.exists(backup_logo):
+                shutil.copy2(backup_logo, panel_logo)
             if os.path.exists(backup_ico):
                 shutil.copy2(backup_ico, panel_ico)
         except Exception:
@@ -1579,6 +1593,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             ctype = "text/html; charset=utf-8"
             # 注入当前版本号（登录页底部显示）
             data = data.replace(b"__VERSION__", CURRENT_VERSION.encode())
+        elif name.endswith(".png"):
+            ctype = "image/png"
         elif name.endswith(".ico"):
             ctype = "image/x-icon"
         else:

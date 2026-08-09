@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.23.17"
+readonly SCRIPT_VERSION="1.23.18"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -166,6 +166,7 @@ do_upgrade() {
         exit 1
     fi
     curl -fsSL "$base_url/static/index.html" -o "$tmpdir/index.html" 2>/dev/null || true
+    curl -fsSL "$base_url/static/github-logo.png" -o "$tmpdir/github-logo.png" 2>/dev/null || true
     curl -fsSL "$base_url/install.sh" -o "$tmpdir/install.sh" 2>/dev/null || true
     # 备份当前版本（保留最近 3 份）
     local bak
@@ -177,6 +178,10 @@ do_upgrade() {
     if [ -s "$tmpdir/index.html" ]; then
         mkdir -p "$APP_DIR/static"
         cp "$tmpdir/index.html" "$APP_DIR/static/index.html"
+    fi
+    if [ -s "$tmpdir/github-logo.png" ]; then
+        mkdir -p "$APP_DIR/static"
+        cp "$tmpdir/github-logo.png" "$APP_DIR/static/github-logo.png"
     fi
     if [ -s "$tmpdir/install.sh" ]; then
         cp "$tmpdir/install.sh" "$0" 2>/dev/null || true
