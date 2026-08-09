@@ -103,6 +103,7 @@ tr:hover td { background: #1d2733; }
 .svc .cs-port { width: 80px; padding: 4px 8px; font-size: 12px; margin-left: 8px; }
 .svc .cs-proto { width: 102px; padding: 4px 6px; font-size: 12px; margin-left: 8px; }
 .svc .cs-hist { width: 112px; padding: 4px 6px; font-size: 12px; margin-left: 8px; }
+.allow-chip { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; font-size: 13px; background: #0d1218; }
 .empty { color: var(--muted); text-align: center; padding: 24px; }
 #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #232e3b; border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; font-size: 13px; }
 #toast.err { border-color: var(--danger); color: var(--danger); }
@@ -283,13 +284,12 @@ tr:hover td { background: #1d2733; }
             保护规则永远存在防锁死；切换端口时旧端口会临时放行，检测到新端口连接后自动清理旧规则
           </div>
           <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">🔒 SSH 白名单：仅允许列表中的 IP/CIDR 访问 SSH 端口（留空 = 所有 IP 可访问）</div>
-          <div class="form-row" style="margin-bottom:6px">
-            <input id="ssh_allow_input" placeholder="如 1.2.3.4, 5.6.7.0/24（逗号分隔）" style="flex:1;min-width:200px">
-            <button class="btn" onclick="saveSshAllow()">保存白名单</button>
-            <button class="btn ghost" onclick="clearSshAllow()">清空（恢复所有 IP）</button>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">🔒 SSH 白名单：仅允许以下 IP/CIDR 访问 SSH 端口（留空 = 所有 IP 可访问）</div>
+          <div class="form-row" style="margin-bottom:8px">
+            <input id="ssh_allow_input" placeholder="IP/CIDR，如 1.2.3.4 或 5.6.7.0/24" style="flex:1;min-width:180px">
+            <button class="btn" onclick="addSshAllow()">添加</button>
           </div>
-          <span id="ssh_allow_status" style="color:var(--muted);font-size:12px">加载中...</span>
+          <div id="ssh_allow_list">加载中...</div>
           <div class="form-row" style="margin-bottom:0">
             <span style="align-self:center">面板端口</span>
             <input id="panel_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
@@ -957,29 +957,49 @@ async function loadSsh() {
   } catch (e) { /* 静默 */ }
   try {
     const d = await api("GET", "/api/ssh/allow-ips");
-    $("ssh_allow_input").value = (d.ips || []).join(", ");
-    $("ssh_allow_status").textContent = d.ips && d.ips.length
-      ? `当前仅允许：${d.ips.join("、")}（你的出口 IP 可能是 ${d.client_ip || "未知"}，请确认已包含）`
-      : "当前：所有 IP 可访问 SSH（你当前访问面板的 IP：" + (d.client_ip || "未知") + "）";
+    // 输入框不保留内容，白名单以列表形式展示（每项可单独删除）
+    $("ssh_allow_input").value = "";
+    renderSshAllowList(d.ips || [], d.client_ip || "");
   } catch (e) { /* 静默 */ }
 }
-function saveSshAllow() {
-  const ips = $("ssh_allow_input").value.trim();
-  confirmPanel(`确认保存 SSH 白名单？\n\n${ips ? "仅以下 IP/CIDR 可访问 SSH：" + ips : "留空 = 恢复所有 IP 可访问 SSH"}\n\n⚠ 警告：请确保你的出口 IP 已包含在列表中，否则 SSH 将立即断开！`, () => {
-    api("POST", "/api/ssh/allow-ips", { ips }).then(d => {
-      toast(d.msg || "已保存", "okk");
-      loadSsh();
-    }).catch(e => toast(e.message, "err"));
-  }, "🔒 SSH 白名单");
+function renderSshAllowList(ips, clientIp) {
+  const box = $("ssh_allow_list"); box.innerHTML = "";
+  if (!ips.length) {
+    box.innerHTML = `<span style="color:var(--muted);font-size:12px">当前：所有 IP 可访问 SSH${clientIp ? "（你当前访问面板的 IP：" + clientIp + "）" : ""}</span>`;
+    return;
+  }
+  const warn = clientIp && !ips.includes(clientIp)
+    ? `<div style="color:var(--warn);font-size:12px;margin-bottom:6px">⚠ 你当前访问面板的 IP（${clientIp}）不在白名单中，保存后 SSH 将断开！</div>` : "";
+  box.innerHTML = warn + ips.map(ip =>
+    `<div class="allow-chip"><span>${ip}</span><button class="btn mini danger" onclick="delSshAllow('${ip}')">删除</button></div>`
+  ).join("");
 }
-function clearSshAllow() {
-  confirmPanel("确认清空 SSH 白名单？\n\n将恢复为所有 IP 均可访问 SSH。", () => {
-    api("POST", "/api/ssh/allow-ips", { ips: "" }).then(d => {
-      toast(d.msg || "已清空", "okk");
-      $("ssh_allow_input").value = "";
-      loadSsh();
+function addSshAllow() {
+  const val = $("ssh_allow_input").value.trim();
+  if (!val) { toast("请输入 IP 或 CIDR", "err"); return; }
+  api("GET", "/api/ssh/allow-ips").then(d => {
+    const ips = d.ips || [];
+    if (ips.includes(val)) { toast("该 IP 已在白名单中", "err"); return; }
+    const next = [...ips, val];
+    confirmPanel(`确认添加 ${val} 到 SSH 白名单？\n\n添加后仅白名单 IP 可访问 SSH。`, () => {
+      api("POST", "/api/ssh/allow-ips", { ips: next.join(",") }).then(d2 => {
+        toast(d2.msg || "已添加", "okk");
+        $("ssh_allow_input").value = "";
+        loadSsh();
+      }).catch(e => toast(e.message, "err"));
+    }, "🔒 添加白名单");
+  }).catch(e => toast(e.message, "err"));
+}
+function delSshAllow(ip) {
+  confirmPanel(`确认从 SSH 白名单删除 ${ip}？\n\n删除后该 IP 将无法访问 SSH。`, () => {
+    api("GET", "/api/ssh/allow-ips").then(d => {
+      const next = (d.ips || []).filter(x => x !== ip);
+      api("POST", "/api/ssh/allow-ips", { ips: next.join(",") }).then(d2 => {
+        toast(`已删除 ${ip}`, "okk");
+        loadSsh();
+      }).catch(e => toast(e.message, "err"));
     }).catch(e => toast(e.message, "err"));
-  }, "🔓 恢复所有 IP");
+  }, "🗑 删除白名单");
 }
 async function setSshPort() {
   const port = $("ssh_port_input").value.trim();
