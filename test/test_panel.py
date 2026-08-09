@@ -862,21 +862,33 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("POST", "/api/bruteforce/ban",
                             {"ip": "198.51.100.88"}, token=token)
         self.assertEqual(code, 200, d)
-        # 把该 IP 的到期时间改为过去，触发一轮扫描
+        # 到期时间改为过去（固定值，配合 now=2000 触发到期）
         bans = panel.load_bans()
         self.assertIn("198.51.100.88", bans)
-        bans["198.51.100.88"] = panel.time.time() - 1
+        bans["198.51.100.88"] = 1000
         panel.save_bans(bans)
-        code, d = self._req("POST", "/api/bruteforce",
-                            {"enabled": True}, token=token)
-        self.assertEqual(code, 200, d)
-        logs = panel.bruteforce_cycle(panel.Config().load(), panel.RuleStore())
-        self.assertTrue(any("198.51.100.88" in log for log in logs), logs)
-        # 规则应已删除（含手动封禁）——从磁盘重新读取（服务器运行时用自身 store，效果一致）
+        # 手动封禁的规则在磁盘上存在
+        before = panel.RuleStore().rules
+        self.assertTrue(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.88"
+                            for r in before), "封禁后应有规则")
+        # 触发一轮扫描（mock 失败检测为空，避免新增其他封禁）
+        cfg = make_cfg()
+        cfg.set("bruteforce", {"enabled": True, "max_fails": 99, "ban_seconds": 600, "fail_window": 300})
+        real_a, real_e = panel.get_failed_ssh_attempts, panel.get_established_ips
+        panel.get_failed_ssh_attempts = lambda w: {}
+        panel.get_established_ips = lambda p: set()
+        try:
+            logs = panel.bruteforce_cycle(cfg, panel.RuleStore(), now=2000)
+            self.assertTrue(any("198.51.100.88" in log for log in logs), logs)
+        finally:
+            panel.get_failed_ssh_attempts, panel.get_established_ips = real_a, real_e
+        # 磁盘规则应已删除（含手动封禁）
         after = panel.RuleStore().rules
         self.assertFalse(any(r.get("type") == "ip_deny" and r.get("ip") == "198.51.100.88"
                              for r in after), "到期后规则应被清理")
         # 清理
+        self._req("POST", "/api/bruteforce/unban",
+                  {"ip": "198.51.100.88"}, token=token)
         self._req("POST", "/api/bruteforce",
                   {"enabled": False}, token=token)
 
