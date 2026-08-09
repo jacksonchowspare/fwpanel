@@ -156,11 +156,7 @@ tr:hover td { background: #1d2733; }
       </div>
       <div class="card"><div class="k">🎛 规则模式</div><div class="v" id="st_mode">-</div>
         <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
-          <select id="mode_sel" title="严格模式默认拒绝、白名单放行，并自动放行面板端口防锁死" style="flex:1">
-            <option value="permissive">宽松</option>
-            <option value="strict">严格</option>
-          </select>
-          <button class="btn mini" onclick="setMode()">切换</button>
+          <button class="btn mini" style="flex:1" onclick="toggleMode()">切换规则模式</button>
         </div>
       </div>
       <div class="card"><div class="k">📋 规则数量</div><div class="v" id="st_rules">-</div></div>
@@ -548,7 +544,6 @@ async function refreshAll() {
     $("st_ssh").textContent = status.ssh_port;
     $("st_ver").textContent = "v" + status.version;
     $("panel_port_input").value = status.panel_port || "";
-    $("mode_sel").value = status.mode;
     $("st_ver").textContent = "v" + status.version;
     renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadIpv6(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
@@ -1197,9 +1192,18 @@ async function svcCusClose(name) {
 }
 
 /* ---------- 模式 ---------- */
-async function setMode() {
-  try { await api("POST", "/api/mode", { mode: $("mode_sel").value }); toast("模式已更新", "okk"); refreshAll(); }
-  catch (e) { toast(e.message, "err"); }
+async function toggleMode() {
+  const cur = (status && status.mode) || "permissive";
+  const next = cur === "strict" ? "permissive" : "strict";
+  const tip = next === "strict"
+    ? "确认切换到严格模式？\n\n默认拒绝所有端口，只放行白名单（SSH 保护 / 面板端口 / 显式放行端口）。\n切换时自动放行面板端口防锁死。"
+    : "确认切换到宽松模式？\n\n默认放行所有端口，仅拦截显式拒绝规则（宽松模式安全性较低，建议仅在排查问题时使用）。";
+  confirmPanel(tip, () => {
+    api("POST", "/api/mode", { mode: next }).then(d => {
+      toast(d.msg || "模式已更新", "okk");
+      refreshAll();
+    }).catch(e => toast(e.message, "err"));
+  }, "🎛 切换规则模式");
 }
 
 /* ---------- 规则 ---------- */
