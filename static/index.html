@@ -297,7 +297,11 @@ tr:hover td { background: #1d2733; }
             <input id="ssh_allow_input" placeholder="IP/CIDR，如 1.2.3.4 或 5.6.7.0/24" style="flex:1;min-width:180px">
             <button class="btn" onclick="addSshAllow()">添加</button>
           </div>
-          <div id="ssh_allow_list">加载中...</div>
+          <div class="form-row" style="margin-bottom:8px">
+            <select id="ssh_allow_sel" style="flex:1;min-width:180px"></select>
+            <button class="btn danger" id="btn_del_allow" onclick="delSshAllow()" disabled>删除选中</button>
+          </div>
+          <div id="ssh_allow_status" style="color:var(--muted);font-size:12px"></div>
         </div>
 
         <div class="panel">
@@ -959,22 +963,31 @@ async function loadSsh() {
   } catch (e) { /* 静默 */ }
   try {
     const d = await api("GET", "/api/ssh/allow-ips");
-    // 输入框不保留内容，白名单以列表形式展示（每项可单独删除）
+    // 输入框不保留内容，白名单以下拉菜单展示（选中后可删除）
     $("ssh_allow_input").value = "";
-    renderSshAllowList(d.ips || [], d.client_ip || "");
+    renderSshAllowSel(d.ips || [], d.client_ip || "");
   } catch (e) { /* 静默 */ }
 }
-function renderSshAllowList(ips, clientIp) {
-  const box = $("ssh_allow_list"); box.innerHTML = "";
+function renderSshAllowSel(ips, clientIp) {
+  const sel = $("ssh_allow_sel");
+  const btn = $("btn_del_allow");
+  sel.innerHTML = "";
   if (!ips.length) {
-    box.innerHTML = `<span style="color:var(--muted);font-size:12px">当前：所有 IP 可访问 SSH${clientIp ? "（你当前访问面板的 IP：" + clientIp + "）" : ""}</span>`;
+    sel.innerHTML = '<option value="">（空：所有 IP 可访问）</option>';
+    btn.disabled = true;
+    $("ssh_allow_status").textContent = clientIp ? "当前访问面板的 IP：" + clientIp : "";
     return;
   }
+  ips.forEach(ip => {
+    const opt = document.createElement("option");
+    opt.value = ip; opt.textContent = ip;
+    sel.appendChild(opt);
+  });
+  btn.disabled = false;
   const warn = clientIp && !ips.includes(clientIp)
-    ? `<div style="color:var(--warn);font-size:12px;margin-bottom:6px">⚠ 你当前访问面板的 IP（${clientIp}）不在白名单中，保存后 SSH 将断开！</div>` : "";
-  box.innerHTML = warn + ips.map(ip =>
-    `<div class="allow-chip"><span>${ip}</span><button class="btn mini danger" onclick="delSshAllow('${ip}')">删除</button></div>`
-  ).join("");
+    ? `⚠ 你当前访问面板的 IP（${clientIp}）不在白名单中！`
+    : `当前 ${ips.length} 个 IP/CIDR`;
+  $("ssh_allow_status").textContent = warn;
 }
 function addSshAllow() {
   const val = $("ssh_allow_input").value.trim();
@@ -992,7 +1005,10 @@ function addSshAllow() {
     }, "🔒 添加白名单");
   }).catch(e => toast(e.message, "err"));
 }
-function delSshAllow(ip) {
+function delSshAllow() {
+  const sel = $("ssh_allow_sel");
+  const ip = sel.value;
+  if (!ip) { toast("请先选择要删除的 IP", "err"); return; }
   confirmPanel(`确认从 SSH 白名单删除 ${ip}？\n\n删除后该 IP 将无法访问 SSH。`, () => {
     api("GET", "/api/ssh/allow-ips").then(d => {
       const next = (d.ips || []).filter(x => x !== ip);
