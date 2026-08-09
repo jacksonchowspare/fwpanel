@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.21.3"
+CURRENT_VERSION = "1.21.4"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -887,6 +887,15 @@ def nginx_conf_dir():
         if os.path.isdir(d):
             return d
     return None
+
+
+def reload_nginx():
+    """nginx -t 校验后 reload；失败返回错误信息"""
+    r = subprocess.run(["nginx", "-t"], capture_output=True, text=True, timeout=15)
+    if r.returncode != 0:
+        return False, f"nginx 配置校验失败: {(r.stderr or r.stdout).strip()[:300]}"
+    subprocess.run(["nginx", "-s", "reload"], capture_output=True, text=True, timeout=15)
+    return True, "nginx 已重载"
 
 
 def nginx_available():
@@ -1835,6 +1844,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "未安装 nginx，请先在反向代理模块一键安装（ACME 挑战需要）"})
             return
         ensure_nginx_default()   # 确保 80 挑战路径兜底配置存在
+        ok, msg = reload_nginx()  # 新配置必须立即生效，否则挑战仍 404
+        if not ok:
+            self._send(500, {"error": msg})
+            return
         ok, msg = issue_cert(domain, email)
         if not ok:
             self._send(500, {"error": msg})

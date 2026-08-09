@@ -990,10 +990,11 @@ class TestAPI(unittest.TestCase):
         token = d["token"]
         if os.path.exists(panel.CERT_FILE):
             os.remove(panel.CERT_FILE)
-        real_issue, real_renew, real_nginx = panel.issue_cert, panel.renew_cert, panel.nginx_available
+        real_issue, real_renew, real_nginx, real_reload = panel.issue_cert, panel.renew_cert, panel.nginx_available, panel.reload_nginx
         panel.issue_cert = lambda dom, email: (True, "证书已签发")
         panel.renew_cert = lambda dom: (True, "证书已续期")
         panel.nginx_available = lambda: True
+        panel.reload_nginx = lambda: (True, "nginx 已重载")
         try:
             # 申请
             code, d = self._req("POST", "/api/cert",
@@ -1019,7 +1020,7 @@ class TestAPI(unittest.TestCase):
                                 {"domain": "bad domain!"}, token=token)
             self.assertEqual(code, 400)
         finally:
-            panel.issue_cert, panel.renew_cert, panel.nginx_available = real_issue, real_renew, real_nginx
+            panel.issue_cert, panel.renew_cert, panel.nginx_available, panel.reload_nginx = real_issue, real_renew, real_nginx, real_reload
             if os.path.exists(panel.CERT_FILE):
                 os.remove(panel.CERT_FILE)
 
