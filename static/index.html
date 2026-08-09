@@ -70,7 +70,7 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 #add_rule_row { display: grid; grid-template-columns: 150px 100px 130px 1fr 170px auto; gap: 8px; align-items: center; }
 @media (max-width: 1080px) { #add_rule_row { grid-template-columns: 1fr 1fr; } }
 /* 添加代理表单：网格等分布局 */
-#add_proxy_row { display: grid; grid-template-columns: 1fr 1fr 90px 100px auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+#add_proxy_row { display: grid; grid-template-columns: 1fr 1fr 90px 100px auto auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
 #add_proxy_row input, #add_proxy_row select { width: 100%; box-sizing: border-box; }
 @media (max-width: 1080px) { #add_proxy_row { grid-template-columns: 1fr 1fr; } }
 .panel h2 { font-size: 15px; margin-bottom: 12px; }
@@ -192,7 +192,8 @@ tr:hover td { background: #1d2733; }
         <input id="px_host" placeholder="目标 IP/主机">
         <input id="px_port" placeholder="端口" inputmode="numeric">
         <select id="px_scheme"><option value="http">http</option><option value="https">https</option></select>
-        <label class="switch" title="WebSocket 支持" style="display:flex;align-items:center;gap:6px;justify-self:center"><input type="checkbox" id="px_ws"><span class="slider"></span><span style="font-size:12px;color:var(--muted)">WS</span></label>
+        <label style="display:flex;align-items:center;gap:4px;justify-self:center;font-size:12px;color:var(--muted);cursor:pointer"><input type="checkbox" id="px_ws"> WebSocket</label>
+        <label style="display:flex;align-items:center;gap:4px;justify-self:center;font-size:12px;color:var(--muted);cursor:pointer" title="HTTP Strict Transport Security：强制浏览器 HTTPS 访问（仅 HTTPS 代理生效）"><input type="checkbox" id="px_hsts"> HSTS</label>
         <button class="btn" onclick="addProxy()">添加代理</button>
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:12px">自动放行 443、自动禁止公网直连目标端口（80 需自行放行，证书申请需要）</div>
@@ -203,8 +204,8 @@ tr:hover td { background: #1d2733; }
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>域名</th><th>目标</th><th>SSL 证书</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody id="proxy_rows"><tr><td colspan="5" style="color:var(--muted)">暂无代理</td></tr></tbody>
+        <thead><tr><th>域名</th><th>目标</th><th>SSL 证书</th><th>功能</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="proxy_rows"><tr><td colspan="6" style="color:var(--muted)">暂无代理</td></tr></tbody>
       </table>
       </div>
       <div id="px_pager" style="display:none;margin-top:10px;align-items:center;justify-content:center;gap:10px">
@@ -713,7 +714,7 @@ async function loadProxy() {
     if (pxPage < 1) pxPage = 1;
     const start = (pxPage - 1) * PX_PAGE_SIZE;
     const pageList = filtered.slice(start, start + PX_PAGE_SIZE);
-    if (!pageList.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无代理，添加一个开始</td></tr>'; }
+    if (!pageList.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">暂无代理，添加一个开始</td></tr>'; }
     for (const p of pageList) {
       const tr = document.createElement("tr");
       const cert = p.cert_exists
@@ -725,8 +726,10 @@ async function loadProxy() {
       const ipBtn = p.block_ip
         ? `<button class="btn mini" style="background:var(--accent2)" onclick="toggleBlockIp('${p.id}', false)">禁止IP访问中</button>`
         : `<button class="btn mini ghost" onclick="toggleBlockIp('${p.id}', true)">禁止IP+端口访问</button>`;
-      tr.innerHTML = `<td>${p.domain}</td><td>${p.scheme}://${p.target_host}:${p.target_port}${p.websocket ? " (WS)" : ""}</td>
+      const feats = [p.websocket ? "WebSocket" : "", p.hsts ? "HSTS" : ""].filter(Boolean).join("、") || "—";
+      tr.innerHTML = `<td>${p.domain}</td><td>${p.scheme}://${p.target_host}:${p.target_port}</td>
         <td style="color:var(--muted);font-size:12px">${certCell}</td>
+        <td style="font-size:12px">${feats}</td>
         <td><label class="switch"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProxy('${p.id}', this.checked)"><span class="slider"></span></label></td>
         <td>${ipBtn}<button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
       tbody.appendChild(tr);
@@ -758,6 +761,7 @@ async function addProxy() {
       domain: $("px_domain").value.trim(), target_host: $("px_host").value.trim(),
       target_port: $("px_port").value.trim(), scheme: $("px_scheme").value,
       websocket: $("px_ws").checked,
+      hsts: $("px_hsts").checked,
     });
     toast(d.msg || "代理已添加", "okk");
     $("px_domain").value = ""; $("px_host").value = ""; $("px_port").value = "";

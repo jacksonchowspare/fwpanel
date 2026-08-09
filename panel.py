@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.23.23"
+CURRENT_VERSION = "1.23.24"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1024,6 +1024,7 @@ def render_proxy_conf(p):
     """生成 nginx server block 配置（含 ACME 挑战路径、HTTP→HTTPS 跳转、WebSocket 支持）"""
     ssl_on = bool(p.get("ssl")) and cert_files_exist(p["domain"])
     ws = bool(p.get("websocket"))
+    hsts = bool(p.get("hsts"))
     block_ip = bool(p.get("block_ip"))
     upstream = f"{p.get('scheme', 'http')}://{p['target_host']}:{p['target_port']}"
     guard = host_guard(p["domain"]) if block_ip else ""
@@ -1058,6 +1059,8 @@ def render_proxy_conf(p):
         lines.append(f"    server_name {p['domain']};")
         lines.append(f"    ssl_certificate {LE_LIVE}/{p['domain']}/fullchain.pem;")
         lines.append(f"    ssl_certificate_key {LE_LIVE}/{p['domain']}/privkey.pem;")
+        if hsts:
+            lines.append('        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;')
         if guard:
             lines.extend(x for x in guard.splitlines() if x)
         lines.append("    location / {")
@@ -2173,6 +2176,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         p = pstore.add({
             "domain": domain, "target_host": host, "target_port": port,
             "scheme": scheme, "websocket": bool(data.get("websocket")),
+            "hsts": bool(data.get("hsts")),
             "ssl": bool(data.get("ssl")),
         })
         # 防火墙放行 443（幂等）；80 不放行，如需证书申请请自行放行 80

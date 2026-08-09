@@ -1141,6 +1141,28 @@ class TestAPI(unittest.TestCase):
         if info["enabled"]:
             self.assertIn("via", info)
 
+    def test_proxy_hsts(self):
+        """反代 HSTS：配置渲染包含 Strict-Transport-Security"""
+        p = {"domain": "hsts.example.com", "target_host": "127.0.0.1",
+             "target_port": 8080, "scheme": "http", "ssl": True,
+             "websocket": False, "hsts": True}
+        # mock 证书文件存在
+        real = panel.LE_LIVE
+        panel.LE_LIVE = self.cfg_dir + "/le"
+        try:
+            os.makedirs(os.path.join(panel.LE_LIVE, "hsts.example.com"), exist_ok=True)
+            for f in ("fullchain.pem", "privkey.pem"):
+                with open(os.path.join(panel.LE_LIVE, "hsts.example.com", f), "w") as fh:
+                    fh.write("x")
+            conf = panel.render_proxy_conf(p)
+            self.assertIn('add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;', conf)
+            # 未启用 HSTS 不渲染
+            p["hsts"] = False
+            conf2 = panel.render_proxy_conf(p)
+            self.assertNotIn("Strict-Transport-Security", conf2)
+        finally:
+            panel.LE_LIVE = real
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
