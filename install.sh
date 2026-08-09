@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.23.20"
+readonly SCRIPT_VERSION="1.23.21"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -164,6 +164,18 @@ do_upgrade() {
         log_err "下载 panel.py 失败，请检查服务器网络后重试"
         rm -rf "$tmpdir"
         exit 1
+    fi
+    # 防降级：当前版本 ≥ 下载版本时跳过（例如服务器已是更高版本）
+    local cur_ver new_ver
+    cur_ver=$(grep -oP 'CURRENT_VERSION\s*=\s*"\K[\d.]+' "$APP_DIR/panel.py" 2>/dev/null | head -1)
+    new_ver=$(grep -oP 'CURRENT_VERSION\s*=\s*"\K[\d.]+' "$tmpdir/panel.py" 2>/dev/null | head -1)
+    if [ -n "$cur_ver" ] && [ -n "$new_ver" ]; then
+        if [ "$(printf '%s\n' "$cur_ver" "$new_ver" | sort -V | tail -1)" = "$cur_ver" ]; then
+            log_info "当前版本 v$cur_ver ≥ 下载版本 v$new_ver，跳过升级（不降级）"
+            rm -rf "$tmpdir"
+            exit 0
+        fi
+        log_info "升级 v$cur_ver → v$new_ver"
     fi
     curl -fsSL "$base_url/static/index.html" -o "$tmpdir/index.html" 2>/dev/null || true
     curl -fsSL "$base_url/static/github-logo.png" -o "$tmpdir/github-logo.png" 2>/dev/null || true

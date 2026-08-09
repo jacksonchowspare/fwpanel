@@ -80,6 +80,25 @@ if echo "$out" | grep -q UPGRADE_CALLED; then echo "  ✗ 体检模式不应升�
 rm -f /tmp/install_funcs_up.sh
 rm -rf /tmp/fakebin
 
+echo "== do_upgrade 防降级（当前 ≥ 下载版本时跳过） =="
+head -n -1 "$SCRIPT" > /tmp/install_funcs_dg.sh
+bash -c 'source /tmp/install_funcs_dg.sh
+mkdir -p /tmp/fwpanel-dg-cur /tmp/fwpanel-dg-tmp
+echo '\''CURRENT_VERSION = "1.23.20"'\'' > /tmp/fwpanel-dg-cur/panel.py
+APP_DIR=/tmp/fwpanel-dg-cur
+curl() {
+  if [[ "$*" == *"/panel.py"* && "$*" == *"-o"* ]]; then
+    echo '\''CURRENT_VERSION = "1.23.19"'\'' > "$(echo "$*" | grep -oP "(?<=-o )\S+")"
+    return 0
+  fi
+  return 1
+}
+mktemp() { echo /tmp/fwpanel-dg-tmp; }
+out=$(do_upgrade 2>&1)
+if echo "$out" | grep -q "不降级"; then echo "  ✓ 防降级生效（1.23.20 ≥ 1.23.19 跳过）"; else echo "  ✗ $out"; exit 1; fi'
+rm -f /tmp/install_funcs_dg.sh
+rm -rf /tmp/fwpanel-dg-cur /tmp/fwpanel-dg-tmp
+
 echo "== gen_initial_rules 生成 SSH+面板端口放行 =="
 RULES_TMP="$(mktemp -u)"
 rm -f "$RULES_TMP"
