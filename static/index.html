@@ -591,10 +591,14 @@ function legacyCopy(text) {
   document.body.removeChild(ta);
 }
 async function toggleBlockIp(id, on) {
-  try {
-    const d = await api("POST", "/api/proxy/" + id, { action: "blockip", enabled: on });
-    toast(d.msg || "已更新", "okk"); loadProxy();
-  } catch (e) { toast(e.message, "err"); }
+  const msg = on
+    ? "确认开启禁止 IP+端口访问？\n\n未匹配该域名的请求（如公网 IP 直连 80/443）将无法访问 nginx 入口。\n注意：仅拦截 nginx 入口——若代理目标是本地端口且该端口已在防火墙放行，公网仍可直连该端口绕过，请勿放行本地服务端口。"
+    : "确认关闭禁止 IP+端口访问？\n\n关闭后公网 IP+端口直连将可访问该反代入口。";
+  confirmPanel(msg, () => {
+    api("POST", "/api/proxy/" + id, { action: "blockip", enabled: on }).then(d => {
+      toast(d.msg || "已更新", "okk"); loadProxy();
+    }).catch(e => toast(e.message, "err"));
+  }, on ? "🚫 禁止 IP 访问" : "🌐 允许 IP 访问");
 }
 
 /* ---------- SSH 防爆破 ---------- */

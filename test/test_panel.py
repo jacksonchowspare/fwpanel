@@ -1347,6 +1347,30 @@ class TestUpgrade(unittest.TestCase):
             if os.path.exists("/tmp/fwpanel-bbr-test.conf"):
                 os.remove("/tmp/fwpanel-bbr-test.conf")
 
+    def test_ensure_nginx_default_blocks_ip(self):
+        """默认兜底配置：80 default_server + 443 ssl_reject_handshake（禁止 IP 直连）"""
+        import tempfile
+        d = tempfile.mkdtemp()
+        real_dir, real_dry, real_ver = (panel.nginx_conf_dir, panel.DRY_RUN,
+                                        panel.nginx_supports_reject_handshake)
+        panel.nginx_conf_dir = lambda: d
+        panel.DRY_RUN = False
+        panel.nginx_supports_reject_handshake = lambda: True
+        try:
+            panel.ensure_nginx_default()
+            content = open(os.path.join(d, "fwpanel-default.conf")).read()
+            self.assertIn("listen 80 default_server;", content)
+            self.assertIn("return 444;", content)
+            self.assertIn("listen 443 ssl default_server;", content)
+            self.assertIn("ssl_reject_handshake on;", content)
+            # 幂等：再次调用不报错且内容不变
+            panel.ensure_nginx_default()
+            content2 = open(os.path.join(d, "fwpanel-default.conf")).read()
+            self.assertEqual(content, content2)
+        finally:
+            panel.nginx_conf_dir, panel.DRY_RUN = real_dir, real_dry
+            panel.nginx_supports_reject_handshake = real_ver
+
     def test_sync_ssh_port(self):
         """SSH 保护端口自动同步：自动模式跟随系统端口，手动模式不覆盖"""
         cfg = make_cfg()

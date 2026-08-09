@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.19.6"
+CURRENT_VERSION = "1.19.7"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -968,6 +968,8 @@ def apply_proxies(store):
     conf_dir = nginx_conf_dir()
     if not conf_dir:
         return False, "未找到 nginx 配置目录（未安装 nginx？）"
+    # 确保默认兜底配置正确（default_server 接管未匹配请求，禁止 IP 直连）
+    ensure_nginx_default()
     try:
         # 写入/删除各代理配置
         for p in store.proxies:
@@ -1087,22 +1089,58 @@ def install_pkgs(pkgs):
     return True, f"已安装: {' '.join(pkgs)}"
 
 
+def nginx_supports_reject_handshake():
+    """nginx >= 1.19.4 支持 ssl_reject_handshake（未匹配 SNI 直接拒绝 TLS 握手）"""
+    try:
+        r = subprocess.run(["nginx", "-v"], capture_output=True, text=True, timeout=10)
+        m = re.search(r"nginx/(\d+)\.(\d+)", (r.stderr or "") + (r.stdout or ""))
+        if m:
+            return (int(m.group(1)), int(m.group(2))) >= (1, 19)
+    except Exception:
+        pass
+    return False
+
+
 def ensure_nginx_default():
-    """写入 nginx 默认兜底配置（ACME 挑战路径 + 未匹配域名返回 444），保证 nginx 可直接启动"""
+    """写入 nginx 默认兜底配置（default_server：未匹配域名一律 444 / 拒绝 TLS 握手）
+    确保公网 IP 直连 80/443 无法访问到任何反代内容（禁止 IP+端口访问的根基）"""
     conf_dir = nginx_conf_dir()
     if not conf_dir or DRY_RUN:
         return
+    # 禁用发行版自带默认站点（避免其抢占 default_server）
+    for f in ("/etc/nginx/sites-enabled/default",
+              "/etc/nginx/sites-enabled/000-default"):
+        if os.path.exists(f) and not os.path.exists(f + ".fwpanel-bak"):
+            try:
+                os.rename(f, f + ".fwpanel-bak")
+                log(f"已禁用系统默认站点: {f}")
+            except OSError:
+                pass
     conf = os.path.join(conf_dir, "fwpanel-default.conf")
     content = ("# FW-Panel 默认兜底\n"
                "server {\n"
-               "    listen 80;\n"
+               "    listen 80 default_server;\n"
                "    server_name _;\n"
                f"    location /.well-known/acme-challenge/ {{ root {ACME_WEBROOT}; }}\n"
                "    location / { return 444; }\n"
                "}\n")
+    # nginx >= 1.19.4：443 未匹配 SNI 直接拒绝握手（IP 直连 443 无法访问）
+    if nginx_supports_reject_handshake():
+        content += ("server {\n"
+                    "    listen 443 ssl default_server;\n"
+                    "    ssl_reject_handshake on;\n"
+                    "    server_name _;\n"
+                    "}\n")
     try:
+        existing = ""
+        if os.path.exists(conf):
+            with open(conf) as f:
+                existing = f.read()
+        if existing == content:
+            return  # 幂等，无需重写
         with open(conf, "w") as f:
             f.write(content)
+        log("nginx 默认兜底配置已更新（default_server 接管未匹配请求）")
     except OSError:
         pass
 
