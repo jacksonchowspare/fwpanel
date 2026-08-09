@@ -1097,18 +1097,17 @@ class TestAPI(unittest.TestCase):
         """SSH 白名单：渲染 ip saddr + drop；空列表恢复默认"""
         rules = panel.RuleStore()
         cfg = panel.Config()
-        nft = panel.NFTManager(rules, cfg)
+        # 白名单模式
         cfg.set("mode", "strict")
         cfg.set("ssh_port", 2222)
-        # 白名单模式
         cfg.set("ssh_allow_ips", ["1.2.3.4", "2001:db8::1"])
-        txt = nft.render(cfg)
+        txt = rules.render(cfg)
         self.assertIn("ip saddr {1.2.3.4} tcp dport 2222 accept", txt)
         self.assertIn("ip6 saddr {2001:db8::1} tcp dport 2222 accept", txt)
         self.assertIn("tcp dport 2222 drop", txt)
         # 空列表恢复默认
         cfg.set("ssh_allow_ips", [])
-        txt = nft.render(cfg)
+        txt = rules.render(cfg)
         self.assertIn("tcp dport 2222 accept   # SSH 保护(不可删除)", txt)
         self.assertNotIn("tcp dport 2222 drop", txt)
 
