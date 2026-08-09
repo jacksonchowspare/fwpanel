@@ -1141,6 +1141,40 @@ class TestAPI(unittest.TestCase):
         if info["enabled"]:
             self.assertIn("via", info)
 
+    def _token(self):
+        """登录拿 token（测试通用；兼容字母序前后密码变化）"""
+        for pw in (TEST_PASS, "NewPass123"):
+            code, d = self._req("POST", "/api/login",
+                                {"username": TEST_USER, "password": pw})
+            if code == 200:
+                return d["token"]
+        self.fail("无法获取测试 token")
+
+    def test_proxy_edit(self):
+        """代理编辑：修改 scheme/websocket/hsts"""
+        # 先添加一个代理（dry-run 环境 apply_proxies 安全）
+        code, d = self._req("POST", "/api/proxy", {
+            "domain": "edit.example.com", "target_host": "127.0.0.1",
+            "target_port": 8080, "scheme": "http"}, token=self._token())
+        self.assertEqual(code, 200, d)
+        pid = d["proxy"]["id"]
+        code, d = self._req("POST", "/api/proxy/" + pid, {
+            "action": "edit", "scheme": "https",
+            "websocket": True, "hsts": True}, token=self._token())
+        self.assertEqual(code, 200, d)
+        self.assertIn("HSTS: 开", d.get("msg", ""))
+        code, d = self._req("GET", "/api/proxy", token=self._token())
+        p = next(x for x in d["proxies"] if x["id"] == pid)
+        self.assertEqual(p["scheme"], "https")
+        self.assertTrue(p["websocket"])
+        self.assertTrue(p["hsts"])
+        # 非法 scheme
+        code, d = self._req("POST", "/api/proxy/" + pid, {
+            "action": "edit", "scheme": "ftp"}, token=self._token())
+        self.assertEqual(code, 400)
+        # 清理
+        self._req("DELETE", "/api/proxy/" + pid, token=self._token())
+
     def test_proxy_hsts(self):
         """反代 HSTS：配置渲染包含 Strict-Transport-Security"""
         p = {"domain": "hsts.example.com", "target_host": "127.0.0.1",

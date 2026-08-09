@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.23.26"
+CURRENT_VERSION = "1.23.27"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -2245,8 +2245,21 @@ class PanelHandler(BaseHTTPRequestHandler):
             ok, msg = apply_proxies(pstore)
             state = "已开启" if p["block_ip"] else "已关闭"
             self._send(200, {"ok": True, "msg": f"{p['domain']} 禁止 IP+端口访问{state}（{msg}）"})
+        elif action == "edit":
+            if "scheme" in data:
+                sc = str(data.get("scheme"))
+                if sc not in ("http", "https"):
+                    self._send(400, {"error": "scheme 必须是 http 或 https"})
+                    return
+                p["scheme"] = sc
+            p["websocket"] = bool(data.get("websocket", p.get("websocket", False)))
+            p["hsts"] = bool(data.get("hsts", p.get("hsts", False)))
+            pstore.save()
+            ok, msg = apply_proxies(pstore)
+            tail = "" if ok else f"；配置应用失败: {msg}"
+            self._send(200, {"ok": True, "msg": f"{p['domain']} 已更新（WebSocket: {'开' if p['websocket'] else '关'} / HSTS: {'开' if p['hsts'] else '关'}）{tail}"})
         else:
-            self._send(400, {"error": f"未知操作: {action}（支持 enable / ssl / renew / blockip）"})
+            self._send(400, {"error": f"未知操作: {action}（支持 enable / ssl / renew / blockip / edit）"})
 
     def _api_proxy_delete(self, pid):
         """删除代理"""

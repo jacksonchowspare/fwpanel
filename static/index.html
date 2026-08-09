@@ -443,6 +443,26 @@ tr:hover td { background: #1d2733; }
   </div>
 </div>
 
+<!-- 编辑代理弹窗 -->
+<div id="pxe_modal" class="modal-mask hidden">
+  <div class="modal" style="width:380px">
+    <h3>✏️ 编辑代理</h3>
+    <div style="margin-bottom:16px">
+      <div style="color:var(--muted);font-size:12px;margin-bottom:8px">代理域名：<span id="pxe_domain" style="color:var(--text)"></span></div>
+      <div class="form-row" style="margin-bottom:10px">
+        <span style="align-self:center">协议</span>
+        <select id="pxe_scheme" style="flex:1"><option value="http">http</option><option value="https">https</option></select>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="pxe_ws"> WebSocket 支持</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="HTTP Strict Transport Security：强制浏览器 HTTPS 访问（仅 HTTPS 代理生效）"><input type="checkbox" id="pxe_hsts"> HSTS（强制 HTTPS，1 年含子域名）</label>
+    </div>
+    <div class="btnrow">
+      <button class="btn ghost" onclick="closePxEdit()">取消</button>
+      <button class="btn" onclick="savePxEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- 通用确认弹窗（面板风格） -->
 <div id="cfm_modal" class="modal-mask hidden">
   <div class="modal" style="width:380px">
@@ -685,6 +705,33 @@ async function toggleBbr() {
   }, "🚀 开启 BBR");
 }
 
+/* ---------- 代理编辑 ---------- */
+let pxeId = null;
+function editProxy(id) {
+  api("GET", "/api/proxy").then(d => {
+    const p = d.proxies.find(x => x.id === id);
+    if (!p) { toast("代理不存在", "err"); return; }
+    pxeId = id;
+    $("pxe_domain").textContent = p.domain;
+    $("pxe_scheme").value = p.scheme || "http";
+    $("pxe_ws").checked = !!p.websocket;
+    $("pxe_hsts").checked = !!p.hsts;
+    $("pxe_modal").classList.remove("hidden");
+  }).catch(e => toast(e.message, "err"));
+}
+function closePxEdit() { $("pxe_modal").classList.add("hidden"); pxeId = null; }
+async function savePxEdit() {
+  if (!pxeId) return;
+  try {
+    const d = await api("POST", "/api/proxy/" + pxeId, {
+      action: "edit", scheme: $("pxe_scheme").value,
+      websocket: $("pxe_ws").checked, hsts: $("pxe_hsts").checked,
+    });
+    toast(d.msg || "已保存", "okk");
+    closePxEdit(); loadProxy();
+  } catch (e) { toast(e.message, "err"); }
+}
+
 /* ---------- 反向代理 ---------- */
 let pxPage = 1;
 const PX_PAGE_SIZE = 5;
@@ -731,7 +778,7 @@ async function loadProxy() {
         <td style="color:var(--muted);font-size:12px">${certCell}</td>
         <td style="font-size:12px">${feats}</td>
         <td><label class="switch"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProxy('${p.id}', this.checked)"><span class="slider"></span></label></td>
-        <td>${ipBtn}<button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
+        <td>${ipBtn}<button class="btn mini ghost" onclick="editProxy('${p.id}')">✏️</button><button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
       tbody.appendChild(tr);
     }
     const pager = $("px_pager");
