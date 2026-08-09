@@ -778,7 +778,7 @@ async function loadProxy() {
         <td style="color:var(--muted);font-size:12px">${certCell}</td>
         <td style="font-size:12px">${feats}</td>
         <td><label class="switch"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggleProxy('${p.id}', this.checked)"><span class="slider"></span></label></td>
-        <td>${ipBtn}<button class="btn mini ghost" onclick="editProxy('${p.id}')">✏️</button><button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
+        <td>${ipBtn}<button class="btn mini ghost" onclick="editProxy('${p.id}')">编辑</button><button class="btn mini danger" onclick="delProxy('${p.id}')">删除</button></td>`;
       tbody.appendChild(tr);
     }
     const pager = $("px_pager");
