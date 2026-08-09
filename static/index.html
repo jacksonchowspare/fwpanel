@@ -448,9 +448,18 @@ async function login() {
     const d = await api("POST", "/api/login", { username: $("lg_user").value, password: $("lg_pass").value });
     token = d.token; localStorage.setItem("fw_token", token);
     showMain(); refreshAll(); toast("登录成功", "okk");
+    resetIOSZoom();   // 修复 iOS 聚焦放大残留：登录后强制恢复 100% 缩放
   } catch (e) { toast(e.message, "err"); }
 }
-function logout() { token = ""; localStorage.removeItem("fw_token"); showLogin(); }
+function resetIOSZoom() {
+  if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
+  const vp = document.querySelector('meta[name="viewport"]');
+  if (!vp) return;
+  // 临时锁定 maximum-scale 强制浏览器重算缩放，再释放（保留用户手动缩放能力）
+  vp.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1.0");
+  setTimeout(() => { vp.setAttribute("content", "width=device-width, initial-scale=1.0"); }, 400);
+}
+function logout() { token = ""; localStorage.removeItem("fw_token"); showLogin(); resetIOSZoom(); }
 
 /* ---------- 重启面板 ---------- */
 async function restartPanel() {
