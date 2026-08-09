@@ -101,6 +101,7 @@ tr:hover td { background: #1d2733; }
       </div>
       <div class="actions">
         <button class="btn ghost" onclick="openPwd()">修改密码</button>
+        <button class="btn ghost" id="btn_restart" onclick="restartPanel()">🔄 重启面板</button>
         <button class="btn ghost" onclick="logout()">退出</button>
       </div>
     </div>
@@ -411,6 +412,23 @@ async function login() {
   } catch (e) { toast(e.message, "err"); }
 }
 function logout() { token = ""; localStorage.removeItem("fw_token"); showLogin(); }
+
+/* ---------- 重启面板 ---------- */
+async function restartPanel() {
+  confirmPanel("确认重启面板服务？\n\n服务将重启（约 3-5 秒），期间页面无法访问，重启完成后自动刷新。", async () => {
+    const btn = $("btn_restart");
+    btn.disabled = true; btn.textContent = "重启中...";
+    try {
+      const d = await api("POST", "/api/restart", {});
+      toast(d.msg || "正在重启...", "okk");
+      setTimeout(() => { location.reload(); }, 5000);
+    } catch (e) {
+      // 服务可能已开始重启导致请求失败——仍尝试自动刷新
+      toast("已发送重启指令，正在等待服务恢复...", "okk");
+      setTimeout(() => { location.reload(); }, 6000);
+    }
+  }, "🔄 重启面板");
+}
 
 /* ---------- 状态 ---------- */
 async function refreshAll() {

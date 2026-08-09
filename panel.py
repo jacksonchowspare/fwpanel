@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.19.7"
+CURRENT_VERSION = "1.19.8"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1321,6 +1321,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_panel_port()
         elif path == "/api/bbr":
             self._api_bbr_enable()
+        elif path == "/api/restart":
+            self._api_restart()
         elif path == "/api/bruteforce":
             self._api_bruteforce_set()
         elif path == "/api/bruteforce/ban":
@@ -1630,6 +1632,18 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(500, {"error": msg})
             return
         self._send(200, {"ok": True, "msg": msg, "enabled": bbr_status()})
+
+    def _api_restart(self):
+        """重启面板服务（先响应，再延迟重启，前端收到反馈后自动重连）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        if DRY_RUN:
+            log("[dry-run] 重启面板服务（跳过）")
+            self._send(200, {"ok": True, "msg": "dry-run: 重启面板（跳过）"})
+            return
+        threading.Timer(1.0, restart_service).start()
+        self._send(200, {"ok": True, "msg": "面板重启中，约 5 秒后自动重新连接..."})
 
     def _api_bruteforce(self):
         """查询防爆破配置与当前封禁列表"""

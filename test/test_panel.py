@@ -931,6 +931,16 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("POST", "/api/bbr", {}, token=token)
         self.assertEqual(code, 200, d)
 
+    def test_restart_api(self):
+        """重启面板 API：dry-run 环境直接返回成功"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/restart", {}, token=token)
+        self.assertEqual(code, 200, d)
+        self.assertTrue(d.get("ok"))
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
