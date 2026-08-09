@@ -1164,13 +1164,20 @@ async function renderRules() {
     (r.proto && r.proto.toLowerCase().includes(ruleSearch)) ||
     (typeName[r.type] || "").includes(ruleSearch)
   ) : rules;
+  // 排序：端口规则按端口号数字升序在前，IP 规则按 IP 排序在后
+  const sorted = [...filtered].sort((a, b) => {
+    const pa = (a.type === "port_allow" || a.type === "port_deny") ? Number(a.port) : Infinity;
+    const pb = (b.type === "port_allow" || b.type === "port_deny") ? Number(b.port) : Infinity;
+    if (pa !== pb) return pa - pb;
+    return String(a.ip || "").localeCompare(String(b.ip || ""));
+  });
   // 用户规则分页：每页 5 条
-  const total = filtered.length;
+  const total = sorted.length;
   const pages = Math.max(1, Math.ceil(total / RULE_PAGE_SIZE));
   if (rulePage > pages) rulePage = pages;
   if (rulePage < 1) rulePage = 1;
   const start = (rulePage - 1) * RULE_PAGE_SIZE;
-  filtered.slice(start, start + RULE_PAGE_SIZE).forEach((r) => {
+  sorted.slice(start, start + RULE_PAGE_SIZE).forEach((r) => {
     const tr = document.createElement("tr");
     const target = r.port ? `<span class="tag prot">${r.proto}/${r.port}</span>` : `<span class="tag ip">${r.ip}</span>`;
     const del = r.protected
