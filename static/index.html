@@ -447,8 +447,12 @@ async function login() {
   try {
     const d = await api("POST", "/api/login", { username: $("lg_user").value, password: $("lg_pass").value });
     token = d.token; localStorage.setItem("fw_token", token);
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+      // iOS：整页刷新复位 Safari 聚焦放大残留（新文档加载必然恢复 100% 缩放，token 已存本地自动登录）
+      location.reload();
+      return;
+    }
     showMain(); refreshAll(); toast("登录成功", "okk");
-    resetIOSZoom();   // 修复 iOS 聚焦放大残留：登录后强制恢复 100% 缩放
   } catch (e) { toast(e.message, "err"); }
 }
 function resetIOSZoom() {
