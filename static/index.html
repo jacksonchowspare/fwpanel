@@ -1125,6 +1125,26 @@ document.addEventListener("keydown", e => { if (e.key === "Enter" && !$("main").
   if (token) { try { showMain(); await refreshAll(); } catch (e) { showLogin(); } }
   else showLogin();
 })();
+/* ---------- iOS 视口诊断（临时，定位后移除） ---------- */
+if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+  const dbg = document.createElement("div");
+  dbg.id = "ios-dbg";
+  dbg.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#000;color:#0f0;font-size:10px;z-index:9999;padding:4px 8px;line-height:1.4";
+  document.body.appendChild(dbg);
+  const upd = () => {
+    const w = window.innerWidth;
+    let maxRight = w, maxEl = "—";
+    document.querySelectorAll("body *").forEach(el => {
+      const r = el.getBoundingClientRect();
+      if (r.right > w + 1 || r.width > w + 1) { if (r.right > maxRight) { maxRight = r.right; maxEl = el.tagName + "." + String(el.className || "").slice(0, 40); } }
+    });
+    const vv = window.visualViewport;
+    dbg.textContent = `innerWidth=${w} dpr=${window.devicePixelRatio} vw=${vv ? vv.width : "?"} scale=${vv ? vv.scale : "?"} 超宽:${maxEl} right=${Math.round(maxRight)}`;
+  };
+  upd();
+  window.addEventListener("resize", upd);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", upd);
+}
 </script>
 </body>
 </html>
