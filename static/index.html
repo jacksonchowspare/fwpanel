@@ -1065,21 +1065,17 @@ async function renderSvc() {
     list.appendChild(row);
   }
   for (const [name, label] of CUSTOM_SVCS) {
-    // 从规则反查该服务已放行的端口（注释「服务:标签」关联，刷新后仍能显示）
+    // 历史端口记录（该服务注释的全部规则，去重）——端口号以历史下拉形式保留
     const svcRules = rules.filter(r => r.type === "port_allow" && r.comment === "服务:" + label);
-    const svcRule = svcRules[svcRules.length - 1] || null;
-    const p = svcRule ? svcRule.port : customSvcPort(name);
-    const proto = svcRule ? svcRule.proto : (($("cs_proto_" + name) && $("cs_proto_" + name).value) || "tcp");
-    const on = !!svcRule;
-    // 历史端口记录（该服务注释的全部规则，去重）
     const histSet = new Set();
     svcRules.forEach(r => histSet.add(r.port + "/" + r.proto));
     const histOpts = [...histSet].map(h => `<option value="${h}">${h}</option>`).join("");
     const row = document.createElement("div"); row.className = "svc";
-    row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="${p || ""}" oninput="csPortChanged('${name}')"><select id="cs_proto_${name}" class="cs-proto" onchange="csPortChanged('${name}')"><option value="tcp"${proto === "tcp" ? " selected" : ""}>TCP</option><option value="udp"${proto === "udp" ? " selected" : ""}>UDP</option><option value="both"${proto === "both" ? " selected" : ""}>TCP+UDP</option></select><select id="cs_hist_${name}" class="cs-hist" onchange="csHistPick('${name}')"><option value="">历史端口</option>${histOpts}</select></span>
+    // 输入框不放行后保留端口（历史下拉已有记录）；按钮常亮，支持连续放行多个端口
+    row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="" oninput="csPortChanged('${name}')"><select id="cs_proto_${name}" class="cs-proto" onchange="csPortChanged('${name}')"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option></select><select id="cs_hist_${name}" class="cs-hist" onchange="csHistPick('${name}')"><option value="">历史端口</option>${histOpts}</select></span>
       <span class="svc-btns">
-        <button class="btn mini" onclick="svcCusAllow('${name}')" ${on ? "disabled" : ""}>放行</button>
-        <button class="btn mini danger" onclick="svcCusClose('${name}')" ${on ? "" : "disabled"}>关闭</button>
+        <button class="btn mini" onclick="svcCusAllow('${name}')">放行</button>
+        <button class="btn mini danger" onclick="svcCusClose('${name}')">关闭</button>
       </span>`;
     list.appendChild(row);
   }
