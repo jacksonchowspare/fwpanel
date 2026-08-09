@@ -29,6 +29,28 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 .grid2 .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .grid2 .panel { margin-bottom: 0; flex: 1; }
 @media (max-width: 1080px) { .grid2 { grid-template-columns: 1fr; } }
+/* 手机端适配 */
+@media (max-width: 720px) {
+  .wrap { padding: 14px 10px 40px; }
+  .topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .topbar .actions { width: 100%; flex-wrap: wrap; gap: 6px; }
+  .topbar .actions .btn { flex: 1; min-width: 90px; padding: 6px 8px; }
+  .cards { grid-template-columns: 1fr 1fr; }
+  .card { padding: 12px 12px; }
+  .card .v { font-size: 16px; }
+  .panel { padding: 12px; margin-bottom: 14px; }
+  .panel h2 { font-size: 14px; margin-bottom: 10px; }
+  /* 表格横向滚动，避免整页错位 */
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+  th, td { padding: 7px 8px; }
+  /* 弹窗自适应屏幕（覆盖内联固定宽度） */
+  .modal { width: calc(100vw - 24px) !important; padding: 18px; }
+  /* 添加规则按钮跨整行 */
+  #add_rule_row .btn { grid-column: span 2; }
+  .svc .cs-port { width: 60px; }
+  .svc .cs-proto { width: 56px; }
+  input, select { font-size: 14px; }
+}
 /* 添加规则表单：等分布局占满全宽，IP 输入框弹性伸展 */
 #add_rule_row { display: grid; grid-template-columns: 150px 100px 130px 1fr 170px auto; gap: 8px; align-items: center; }
 @media (max-width: 1080px) { #add_rule_row { grid-template-columns: 1fr 1fr; } }
