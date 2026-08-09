@@ -983,9 +983,9 @@ class TestAPI(unittest.TestCase):
         self._req("POST", "/api/panel/port", {"port": cur_port}, token=token)
 
     def test_cert_api(self):
-        """独立证书 API：申请/列表/续期/移除（mock issue_cert/renew_cert）"""
+        """独立证书 API：申请/列表/续期/移除（按字母序在 full_flow 前，密码为初始值）"""
         code, d = self._req("POST", "/api/login",
-                            {"username": TEST_USER, "password": "NewPass123"})
+                            {"username": TEST_USER, "password": TEST_PASS})
         self.assertEqual(code, 200)
         token = d["token"]
         if os.path.exists(panel.CERT_FILE):
