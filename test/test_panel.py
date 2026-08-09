@@ -1148,7 +1148,7 @@ class TestAPI(unittest.TestCase):
              "websocket": False, "hsts": True}
         # mock 证书文件存在
         real = panel.LE_LIVE
-        panel.LE_LIVE = self.cfg_dir + "/le"
+        panel.LE_LIVE = tempfile.mkdtemp(prefix="fwpanel-le-")
         try:
             os.makedirs(os.path.join(panel.LE_LIVE, "hsts.example.com"), exist_ok=True)
             for f in ("fullchain.pem", "privkey.pem"):
@@ -1161,7 +1161,9 @@ class TestAPI(unittest.TestCase):
             conf2 = panel.render_proxy_conf(p)
             self.assertNotIn("Strict-Transport-Security", conf2)
         finally:
+            tmp_le = panel.LE_LIVE
             panel.LE_LIVE = real
+            shutil.rmtree(tmp_le, ignore_errors=True)
 
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
