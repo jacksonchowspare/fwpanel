@@ -1255,10 +1255,13 @@ class TestUpgrade(unittest.TestCase):
             f.write(py_content)
         with open(os.path.join(src, "index.html"), "w") as f:
             f.write("<html>new</html>")
+        logo = os.path.join(src, "github-logo.png")
+        with open(logo, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\nfake-logo")
         ico = os.path.join(src, "favicon.ico")
         with open(ico, "wb") as f:
             f.write(b"\x00\x00\x01\x00fake-ico")
-        return os.path.join(src, "panel.py"), os.path.join(src, "index.html"), ico
+        return os.path.join(src, "panel.py"), os.path.join(src, "index.html"), logo, ico
 
     def test_upgrade_success(self):
         panel.get_latest_version = lambda: "9.9.9"
