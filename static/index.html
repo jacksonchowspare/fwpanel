@@ -154,7 +154,15 @@ tr:hover td { background: #1d2733; }
           <button class="btn mini danger" id="btn_fw_off" onclick="setFw(false)" style="display:none">关闭防火墙</button>
         </div>
       </div>
-      <div class="card"><div class="k">🎛 规则模式</div><div class="v" id="st_mode">-</div></div>
+      <div class="card"><div class="k">🎛 规则模式</div><div class="v" id="st_mode">-</div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+          <select id="mode_sel" title="严格模式默认拒绝、白名单放行，并自动放行面板端口防锁死" style="flex:1">
+            <option value="permissive">宽松</option>
+            <option value="strict">严格</option>
+          </select>
+          <button class="btn mini" onclick="setMode()">切换</button>
+        </div>
+      </div></div>
       <div class="card"><div class="k">📋 规则数量</div><div class="v" id="st_rules">-</div></div>
       <div class="card"><div class="k">🔐 SSH 保护端口</div><div class="v" id="st_ssh">-</div></div>
       <div class="card"><div class="k">📦 面板版本 / 更新</div><div class="v" id="st_ver" style="font-size:15px">-</div>
@@ -221,21 +229,7 @@ tr:hover td { background: #1d2733; }
     <div class="grid2">
       <div class="col">
         <div class="panel">
-          <h2>🚦 防火墙模式</h2>
-          <div class="form-row">
-            <select id="mode_sel">
-              <option value="permissive">宽松模式（默认放行，按需拒绝）</option>
-              <option value="strict">严格模式（默认拒绝，白名单放行）</option>
-            </select>
-            <button class="btn" onclick="setMode()">应用模式</button>
-          </div>
-          <div style="color:var(--muted);font-size:12px">
-            严格模式会自动放行面板端口，防止面板被锁死
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>🔌 服务快捷开关</h2>
+          <h2>🧰 服务快捷开关</h2>
           <div id="svc_list"></div>
         </div>
 
