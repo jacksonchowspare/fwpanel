@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.22.12"
+CURRENT_VERSION = "1.22.13"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -463,11 +463,16 @@ def version_gt(a, b):
 
 
 def get_latest_version():
-    """查询 GitHub 最新版本号（GitHub API → jsDelivr data API 双源）"""
-    d = http_get_json("https://api.github.com/repos/jacksonchowspare/fwpanel/releases/latest")
-    if d and d.get("tag_name"):
-        return d["tag_name"].lstrip("v")
-    d = http_get_json("https://data.jsdelivr.com/v1/package/gh/jacksonchowspare/fwpanel")
+    """查询 GitHub 最新版本号（GitHub API 带重试 → jsDelivr data API 兜底）"""
+    # GitHub API 主源：失败重试 2 次（服务器网络波动/限流时常见）
+    for attempt in (1, 2, 3):
+        d = http_get_json("https://api.github.com/repos/jacksonchowspare/fwpanel/releases/latest", timeout=20)
+        if d and d.get("tag_name"):
+            return d["tag_name"].lstrip("v")
+        if attempt < 3:
+            time.sleep(2)
+    # 兜底：jsDelivr（可能有缓存滞后，比 GitHub 慢一拍）
+    d = http_get_json("https://data.jsdelivr.com/v1/package/gh/jacksonchowspare/fwpanel", timeout=20)
     if d and d.get("versions"):
         return d["versions"][0]
     return None
