@@ -552,9 +552,10 @@ async function refreshAll() {
 /* ---------- 证书自动续期状态（证书模块 + 反代模块共用） ---------- */
 function fmtRenew(r) {
   if (!r) return "";
-  return r.enabled
-    ? ` · 自动续期 ✅（${r.via}${r.next ? "，下次检测 " + r.next : ""}）`
-    : ` · ⚠ 自动续期未启用：${r.reason || "未知"}`;
+  if (r.enabled) {
+    return r.next ? ` · 自动续期 ✅（下次检测：${r.next}）` : " · 自动续期 ✅";
+  }
+  return ` · ⚠ 自动续期未启用：${r.reason || "未知"}`;
 }
 
 /* ---------- 单独申请 SSL 证书 ---------- */
