@@ -1024,6 +1024,52 @@ class TestAPI(unittest.TestCase):
             if os.path.exists(panel.CERT_FILE):
                 os.remove(panel.CERT_FILE)
 
+    def test_ipv6_mode(self):
+        """IPv6 模式设置：sysctl.d + gai.conf 写入（隔离路径）"""
+        import tempfile
+        d = tempfile.mkdtemp()
+        real_sysctl, real_gai = panel.IPV6_SYSCTL, panel.GAI_CONF
+        panel.IPV6_SYSCTL = os.path.join(d, "99-ipv6.conf")
+        panel.GAI_CONF = os.path.join(d, "gai.conf")
+        try:
+            ok, msg = panel.set_ipv6_mode("v4_first")
+            self.assertTrue(ok, msg)
+            self.assertIn("disable_ipv6=0", open(panel.IPV6_SYSCTL).read())
+            self.assertIn("precedence ::ffff:0:0/96 100", open(panel.GAI_CONF).read())
+            ok, msg = panel.set_ipv6_mode("disable")
+            self.assertTrue(ok, msg)
+            self.assertIn("disable_ipv6=1", open(panel.IPV6_SYSCTL).read())
+            self.assertTrue(open(panel.GAI_CONF).read().strip().startswith("#"),
+                            "gai.conf 的 precedence 行应被注释")
+            ok, msg = panel.set_ipv6_mode("xxx")
+            self.assertFalse(ok)
+        finally:
+            panel.IPV6_SYSCTL, panel.GAI_CONF = real_sysctl, real_gai
+
+    def test_ipv6_api(self):
+        """IPv6 API：查询 + 设置（隔离路径，不触碰真实 /etc）"""
+        import tempfile
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        d0 = tempfile.mkdtemp()
+        real_s, real_g = panel.IPV6_SYSCTL, panel.GAI_CONF
+        panel.IPV6_SYSCTL = os.path.join(d0, "ipv6.conf")
+        panel.GAI_CONF = os.path.join(d0, "gai.conf")
+        try:
+            code, d = self._req("GET", "/api/ipv6", token=token)
+            self.assertEqual(code, 200)
+            self.assertIn("status", d)
+            code, d = self._req("POST", "/api/ipv6",
+                                {"mode": "bad"}, token=token)
+            self.assertEqual(code, 400)
+            code, d = self._req("POST", "/api/ipv6",
+                                {"mode": "enable"}, token=token)
+            self.assertEqual(code, 200, d)
+        finally:
+            panel.IPV6_SYSCTL, panel.GAI_CONF = real_s, real_g
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})

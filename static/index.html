@@ -254,6 +254,14 @@ tr:hover td { background: #1d2733; }
             <span id="bbr_status" style="color:var(--muted);font-size:12px;align-self:center">检测中...</span>
           </div>
           <div style="color:var(--muted);font-size:12px">BBR 为 Google 的 TCP 拥塞控制算法，可提升网络传输速度（需 Linux 4.9+ 内核）</div>
+          <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
+          <div class="form-row" style="margin-bottom:8px">
+            <button class="btn ghost" onclick="setIpv6('v4_first')">🌐 IPv4 优先</button>
+            <button class="btn ghost" onclick="setIpv6('disable')">🚫 禁用 IPv6</button>
+            <button class="btn ghost" onclick="setIpv6('enable')">✅ 开启 IPv6</button>
+            <span id="ipv6_status" style="color:var(--muted);font-size:12px;align-self:center">检测中...</span>
+          </div>
+          <div style="color:var(--muted);font-size:12px">IPv4 优先 = IPv6 保持开启但优先走 IPv4；禁用/开启立即生效（sysctl + gai.conf）</div>
         </div>
       </div>
 
@@ -529,7 +537,7 @@ async function refreshAll() {
     $("panel_port_input").value = status.panel_port || "";
     $("mode_sel").value = status.mode;
     $("st_ver").textContent = "v" + status.version;
-    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); autoCheckUpgrade();
+    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadIpv6(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
 
@@ -600,6 +608,26 @@ async function showCertPathsSolo(domain) {
     $("pm_key").textContent = c.key_path;
     $("path_modal").classList.remove("hidden");
   } catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------- IPv6 设置 ---------- */
+const IPV6_LABEL = { v4_first: "🌐 IPv4 优先", disabled: "🚫 已禁用", enabled: "✅ 已开启（默认）" };
+async function loadIpv6() {
+  try {
+    const d = await api("GET", "/api/ipv6");
+    $("ipv6_status").textContent = "当前：" + (IPV6_LABEL[d.status] || d.status);
+  } catch (e) { $("ipv6_status").textContent = "状态获取失败"; }
+}
+function setIpv6(mode) {
+  const tip = { v4_first: "确认设置 IPv4 优先？\n\nIPv6 保持开启，但域名解析优先返回 IPv4 地址（gai.conf precedence）。\n立即生效，无需重启。",
+                disable: "确认禁用 IPv6？\n\n将关闭系统 IPv6 协议栈（sysctl 持久化）。\n注意：如果 SSH/面板依赖 IPv6 访问，禁用后需改用 IPv4 连接。",
+                enable: "确认开启 IPv6？\n\n将启用 IPv6 协议栈并恢复系统默认地址优先级。\n立即生效。" }[mode];
+  confirmPanel(tip, () => {
+    api("POST", "/api/ipv6", { mode }).then(d => {
+      toast(d.msg || "设置成功", "okk");
+      loadIpv6();
+    }).catch(e => toast(e.message, "err"));
+  }, { v4_first: "🌐 IPv4 优先", disable: "🚫 禁用 IPv6", enable: "✅ 开启 IPv6" }[mode]);
 }
 
 /* ---------- BBR ---------- */

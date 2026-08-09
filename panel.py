@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.21.5"
+CURRENT_VERSION = "1.22.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1195,6 +1195,90 @@ def ensure_nginx_default():
 
 # ------------------------------- BBR -------------------------------
 
+IPV6_SYSCTL = "/etc/sysctl.d/99-fwpanel-ipv6.conf"
+GAI_CONF = "/etc/gai.conf"
+
+
+def ipv6_status():
+    """IPv6 状态：v4_first（IPv6 开+IPv4 优先）/ disabled / enabled"""
+    try:
+        with open("/proc/sys/net/ipv6/conf/all/disable_ipv6") as f:
+            disabled = f.read().strip() == "1"
+    except Exception:
+        disabled = True
+    v4_first = False
+    try:
+        with open(GAI_CONF) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("precedence ::ffff:0:0/96") and not s.startswith("#"):
+                    v4_first = True
+                    break
+    except Exception:
+        pass
+    if disabled:
+        return "disabled"
+    return "v4_first" if v4_first else "enabled"
+
+
+def set_ipv6_mode(mode):
+    """设置 IPv6 模式：v4_first / disable / enable（写 sysctl.d + gai.conf，立即生效）"""
+    if mode not in ("v4_first", "disable", "enable"):
+        return False, "mode 必须是 v4_first / disable / enable"
+    disable = "1" if mode == "disable" else "0"
+    # 1. sysctl 持久化配置 + 立即生效
+    content = (f"net.ipv6.conf.all.disable_ipv6={disable}\n"
+               f"net.ipv6.conf.default.disable_ipv6={disable}\n")
+    try:
+        os.makedirs("/etc/sysctl.d", exist_ok=True)
+        tmp = IPV6_SYSCTL + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.replace(tmp, IPV6_SYSCTL)
+        if not DRY_RUN:
+            r = subprocess.run(["sysctl", "--system"], capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                return False, f"sysctl 应用失败: {(r.stderr or r.stdout).strip()[:200]}"
+            for k in ("net.ipv6.conf.all.disable_ipv6",
+                      "net.ipv6.conf.default.disable_ipv6"):
+                subprocess.run(["sysctl", "-w", f"{k}={disable}"],
+                               capture_output=True, text=True, timeout=10)
+    except OSError as e:
+        return False, f"写入 {IPV6_SYSCTL} 失败: {e}"
+    # 2. gai.conf：IPv4 优先规则（v4_first 添加，其余注释掉）
+    try:
+        if mode == "v4_first":
+            if not os.path.exists(GAI_CONF):
+                with open(GAI_CONF, "w") as f:
+                    f.write("")
+            with open(GAI_CONF) as f:
+                lines = f.read().splitlines()
+            if not any(s.strip().startswith("precedence ::ffff:0:0/96")
+                       and not s.strip().startswith("#") for s in lines):
+                lines.append("precedence ::ffff:0:0/96 100")
+                with open(GAI_CONF, "w") as f:
+                    f.write("\n".join(lines) + "\n")
+        else:
+            if os.path.exists(GAI_CONF):
+                with open(GAI_CONF) as f:
+                    lines = f.read().splitlines()
+                changed = False
+                for i, s in enumerate(lines):
+                    if s.strip().startswith("precedence ::ffff:0:0/96") \
+                            and not s.strip().startswith("#"):
+                        lines[i] = "# " + s.lstrip("# ")
+                        changed = True
+                if changed:
+                    with open(GAI_CONF, "w") as f:
+                        f.write("\n".join(lines) + "\n")
+    except OSError as e:
+        return False, f"gai.conf 修改失败: {e}"
+    label = {"v4_first": "IPv4 优先（IPv6 保持开启）",
+             "disable": "已禁用 IPv6",
+             "enable": "已开启 IPv6（系统默认优先级）"}[mode]
+    return True, f"设置完成：{label}"
+
+
 def bbr_status():
     """BBR 是否已开启"""
     try:
@@ -1373,6 +1457,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_panel_port()
         elif path == "/api/bbr":
             self._api_bbr_enable()
+        elif path == "/api/ipv6":
+            self._api_ipv6()
         elif path == "/api/restart":
             self._api_restart()
         elif path == "/api/bruteforce":
@@ -1709,6 +1795,22 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(500, {"error": msg})
             return
         self._send(200, {"ok": True, "msg": msg, "enabled": bbr_status()})
+
+    def _api_ipv6(self):
+        """GET：查询 IPv6 状态；POST {mode}：设置 v4_first / disable / enable"""
+        token = self._require_auth()
+        if token is None:
+            return
+        if self.command == "GET":
+            self._send(200, {"status": ipv6_status()})
+            return
+        data = self._read_json()
+        mode = str(data.get("mode", ""))
+        ok, msg = set_ipv6_mode(mode)
+        if not ok:
+            self._send(400, {"error": msg})
+            return
+        self._send(200, {"ok": True, "msg": msg, "status": ipv6_status()})
 
     def _api_restart(self):
         """重启面板服务（先响应，再延迟重启，前端收到反馈后自动重连）"""
