@@ -691,6 +691,10 @@ class TestAPI(unittest.TestCase):
         code, d = self._req("GET", "/api/rules", token=token)
         ports = {r.get("port") for r in d["rules"] if r.get("type") == "port_allow"}
         self.assertIn(443, ports)
+        # 目标端口 8080 自动禁止公网直连
+        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080]
+        self.assertTrue(deny, "目标端口应有禁止规则")
+        self.assertEqual(deny[0]["comment"], panel.PROXY_TARGET_DENY_COMMENT)
         self.assertNotIn(80, ports, "80 不应自动放行")
         # 查询列表
         code, d = self._req("GET", "/api/proxy", token=token)

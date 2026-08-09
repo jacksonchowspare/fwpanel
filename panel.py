@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.19.8"
+CURRENT_VERSION = "1.19.9"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -276,9 +276,11 @@ class RuleStore:
         tag = f"  # {comment}" if comment else ""
         if t in ("port_allow", "port_deny"):
             action = "accept" if t == "port_allow" else "drop"
+            # 拒绝类规则排除本机回环：只挡外部流量，不挡 nginx 本机转发（反代目标端口场景）
+            prefix = 'iifname != "lo" ' if t == "port_deny" else ""
             if r.get("proto") == "both":
-                return [f"        tcp dport {r['port']} {action}{tag}",
-                        f"        udp dport {r['port']} {action}{tag}"]
+                return [f"        {prefix}tcp dport {r['port']} {action}{tag}",
+                        f"        {prefix}udp dport {r['port']} {action}{tag}"]
             proto = r.get("proto", "tcp")
             return [f"        {proto} dport {r['port']} {action}{tag}"]
         if t in ("ip_allow", "ip_deny"):
@@ -808,6 +810,7 @@ def bruteforce_loop(config, store, interval=30):
 PROXIES_FILE = os.path.join(BASE_DIR, "proxies.json")
 ACME_WEBROOT = "/var/www/fwpanel-acme"
 LE_LIVE = "/etc/letsencrypt/live"
+PROXY_TARGET_DENY_COMMENT = "反代目标端口-禁止公网直连"
 
 
 class ProxyStore:
@@ -1809,6 +1812,14 @@ class PanelHandler(BaseHTTPRequestHandler):
                 store.add({"type": "port_allow", "proto": "tcp", "port": p443,
                            "comment": "反代:HTTPS"})
                 changed = True
+        # 禁止公网直连目标端口（80/443 除外——入口端口由 nginx 兜底 444 控制）
+        # 拒绝规则含回环豁免，不影响 nginx 本机转发
+        if port not in (80, 443) and not any(
+                r.get("type") == "port_deny" and r.get("port") == port
+                and r.get("comment") == PROXY_TARGET_DENY_COMMENT for r in store.rules):
+            store.add({"type": "port_deny", "proto": "tcp", "port": port,
+                       "comment": PROXY_TARGET_DENY_COMMENT})
+            changed = True
         if changed:
             store.save()
         self.server.nft.apply()
@@ -1872,7 +1883,17 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "代理不存在"})
             return
         domain = p["domain"]
+        target_port = p.get("target_port")
         pstore.remove(pid)
+        # 清理目标端口禁止规则（若没有其他代理仍指向该端口）
+        if target_port and target_port not in (80, 443):
+            store = self.server.store
+            if not any(q.get("target_port") == target_port for q in pstore.proxies):
+                store.rules = [r for r in store.rules
+                               if not (r.get("type") == "port_deny" and r.get("port") == target_port
+                                       and r.get("comment") == PROXY_TARGET_DENY_COMMENT)]
+                store.save()
+                self.server.nft.apply()
         ok, msg = apply_proxies(pstore)
         self._send(200, {"ok": True, "msg": f"代理 {domain} 已删除（{msg}）"})
 

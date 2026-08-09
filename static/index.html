@@ -140,7 +140,7 @@ tr:hover td { background: #1d2733; }
         <label class="switch" title="WebSocket 支持"><input type="checkbox" id="px_ws"><span class="slider"></span></label>
         <span style="align-self:center;color:var(--muted);font-size:12px">WS</span>
         <button class="btn" onclick="addProxy()">添加代理</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">自动放行 443 并生成 nginx 配置（80 需自行放行，证书申请需要）</span>
+        <span style="color:var(--muted);font-size:12px;align-self:center">自动放行 443、自动禁止公网直连目标端口（80 需自行放行，证书申请需要）</span>
       </div>
       <div class="form-row" style="margin-bottom:10px">
         <input id="px_search" placeholder="🔍 搜索代理（域名 / 目标）" style="width:240px" oninput="pxSearchChanged()">
@@ -610,8 +610,8 @@ function legacyCopy(text) {
 }
 async function toggleBlockIp(id, on) {
   const msg = on
-    ? "确认开启禁止 IP+端口访问？\n\n未匹配该域名的请求（如公网 IP 直连 80/443）将无法访问 nginx 入口。\n注意：仅拦截 nginx 入口——若代理目标是本地端口且该端口已在防火墙放行，公网仍可直连该端口绕过，请勿放行本地服务端口。"
-    : "确认关闭禁止 IP+端口访问？\n\n关闭后公网 IP+端口直连将可访问该反代入口。";
+    ? "确认开启禁止 IP+端口访问？\n\n未匹配该域名的请求（如公网 IP 直连 80/443）将无法访问 nginx 入口。\n目标端口已自动禁止公网直连（规则列表可见）。\n注意：请同时确认云安全组未放行目标端口。"
+    : "确认关闭禁止 IP+端口访问？\n\n关闭后公网 IP+端口直连将可访问该反代入口（目标端口仍保持禁止直连）。";
   confirmPanel(msg, () => {
     api("POST", "/api/proxy/" + id, { action: "blockip", enabled: on }).then(d => {
       toast(d.msg || "已更新", "okk"); loadProxy();
