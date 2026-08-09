@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.22.19"
+CURRENT_VERSION = "1.23.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -257,8 +257,18 @@ class RuleStore:
             if r.get("type") in ("ip_deny", "port_deny"):
                 for line in self._render_one(r):
                     lines.append(line)
-        # SSH 保护规则（永远存在，防锁死）
-        lines.append(f"        tcp dport {ssh_port} accept   # SSH 保护(不可删除)")
+        # SSH 保护规则（永远存在，防锁死；支持白名单模式：仅允许列表 IP 访问）
+        allow_ips = config.get("ssh_allow_ips") or []
+        if allow_ips:
+            v4 = [ip for ip in allow_ips if ":" not in ip]
+            v6 = [ip for ip in allow_ips if ":" in ip]
+            if v4:
+                lines.append(f"        ip saddr {{{', '.join(v4)}}} tcp dport {ssh_port} accept   # SSH 白名单")
+            if v6:
+                lines.append(f"        ip6 saddr {{{', '.join(v6)}}} tcp dport {ssh_port} accept   # SSH 白名单")
+            lines.append(f"        tcp dport {ssh_port} drop   # SSH 保护(仅白名单 IP 可访问)")
+        else:
+            lines.append(f"        tcp dport {ssh_port} accept   # SSH 保护(不可删除)")
         # 用户规则（放行/拒绝之外的部分）
         for r in self.rules:
             if r.get("type") not in ("ip_deny", "port_deny"):
@@ -1421,6 +1431,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_upgrade_check()
         elif path == "/api/ssh":
             self._api_ssh()
+        elif path == "/api/ssh/allow-ips":
+            self._api_ssh_allow_ips()
         elif path == "/api/bruteforce":
             self._api_bruteforce()
         elif path == "/api/proxy":
@@ -1460,6 +1472,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_ssh_apply()
         elif path == "/api/ssh":
             self._api_ssh_set()
+        elif path == "/api/ssh/allow-ips":
+            self._api_ssh_allow_ips_set()
         elif path == "/api/panel/port":
             self._api_panel_port()
         elif path == "/api/bbr":
@@ -1578,6 +1592,40 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(500, {"error": msg})
             return
         self._send(200, {"ok": True, "msg": msg})
+
+    def _api_ssh_allow_ips(self):
+        """GET：查询 SSH 白名单 + 当前访问面板的 IP"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, {
+            "ips": self.server.config.get("ssh_allow_ips") or [],
+            "client_ip": self.client_address[0] if self.client_address else "",
+        })
+
+    def _api_ssh_allow_ips_set(self):
+        """POST：设置 SSH 白名单 {ips: "1.2.3.4,5.6.7.8" | ""}（空 = 恢复所有 IP）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        raw = str(data.get("ips", "")).strip()
+        ips = []
+        if raw:
+            for part in raw.replace("，", ",").split(","):
+                ip = part.strip()
+                if ip and not is_valid_ip_or_net(ip):
+                    self._send(400, {"error": f"IP 格式无效: {ip}（支持 1.2.3.4 / CIDR）"})
+                    return
+                if ip:
+                    ips.append(ip)
+        self.server.config.set("ssh_allow_ips", ips)
+        ok, msg = self.server.nft.apply()
+        if not ok:
+            self._send(500, {"error": f"规则应用失败: {msg}"})
+            return
+        tip = f"仅允许 {len(ips)} 个 IP/CIDR 访问 SSH" if ips else "所有 IP 均可访问 SSH"
+        self._send(200, {"ok": True, "msg": f"SSH 白名单已保存：{tip}（{msg}）"})
 
     def _api_ssh(self):
         """查询 SSH 端口状态：面板保护端口 vs 系统实际端口"""

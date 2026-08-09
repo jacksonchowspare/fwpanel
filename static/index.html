@@ -282,6 +282,14 @@ tr:hover td { background: #1d2733; }
           <div style="color:var(--muted);font-size:12px;margin-bottom:14px">
             保护规则永远存在防锁死；切换端口时旧端口会临时放行，检测到新端口连接后自动清理旧规则
           </div>
+          <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
+          <div style="color:var(--muted);font-size:12px;margin-bottom:6px">🔒 SSH 白名单：仅允许列表中的 IP/CIDR 访问 SSH 端口（留空 = 所有 IP 可访问）</div>
+          <div class="form-row" style="margin-bottom:6px">
+            <input id="ssh_allow_input" placeholder="如 1.2.3.4, 5.6.7.0/24（逗号分隔）" style="flex:1;min-width:200px">
+            <button class="btn" onclick="saveSshAllow()">保存白名单</button>
+            <button class="btn ghost" onclick="clearSshAllow()">清空（恢复所有 IP）</button>
+          </div>
+          <span id="ssh_allow_status" style="color:var(--muted);font-size:12px">加载中...</span>
           <div class="form-row" style="margin-bottom:0">
             <span style="align-self:center">面板端口</span>
             <input id="panel_port_input" placeholder="端口" style="width:80px" inputmode="numeric">
@@ -947,6 +955,31 @@ async function loadSsh() {
       ? `系统 SSH 服务端口 ${d.sshd_port}，与保护一致 ✓`
       : `⚠ 系统 SSH 服务实际监听 ${d.sshd_port}，与保护端口 ${d.protected_port} 不一致`;
   } catch (e) { /* 静默 */ }
+  try {
+    const d = await api("GET", "/api/ssh/allow-ips");
+    $("ssh_allow_input").value = (d.ips || []).join(", ");
+    $("ssh_allow_status").textContent = d.ips && d.ips.length
+      ? `当前仅允许：${d.ips.join("、")}（你的出口 IP 可能是 ${d.client_ip || "未知"}，请确认已包含）`
+      : "当前：所有 IP 可访问 SSH（你当前访问面板的 IP：" + (d.client_ip || "未知") + "）";
+  } catch (e) { /* 静默 */ }
+}
+function saveSshAllow() {
+  const ips = $("ssh_allow_input").value.trim();
+  confirmPanel(`确认保存 SSH 白名单？\n\n${ips ? "仅以下 IP/CIDR 可访问 SSH：" + ips : "留空 = 恢复所有 IP 可访问 SSH"}\n\n⚠ 警告：请确保你的出口 IP 已包含在列表中，否则 SSH 将立即断开！`, () => {
+    api("POST", "/api/ssh/allow-ips", { ips }).then(d => {
+      toast(d.msg || "已保存", "okk");
+      loadSsh();
+    }).catch(e => toast(e.message, "err"));
+  }, "🔒 SSH 白名单");
+}
+function clearSshAllow() {
+  confirmPanel("确认清空 SSH 白名单？\n\n将恢复为所有 IP 均可访问 SSH。", () => {
+    api("POST", "/api/ssh/allow-ips", { ips: "" }).then(d => {
+      toast(d.msg || "已清空", "okk");
+      $("ssh_allow_input").value = "";
+      loadSsh();
+    }).catch(e => toast(e.message, "err"));
+  }, "🔓 恢复所有 IP");
 }
 async function setSshPort() {
   const port = $("ssh_port_input").value.trim();

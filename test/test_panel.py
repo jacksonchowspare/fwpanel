@@ -1093,6 +1093,47 @@ class TestAPI(unittest.TestCase):
         # 清理
         self._req("DELETE", "/api/rules/" + r[0]["id"], token=token)
 
+    def test_ssh_allow_ips(self):
+        """SSH 白名单：渲染 ip saddr + drop；空列表恢复默认"""
+        rules = panel.RuleStore()
+        cfg = panel.Config()
+        nft = panel.NFTManager(rules, cfg)
+        cfg.set("mode", "strict")
+        cfg.set("ssh_port", 2222)
+        # 白名单模式
+        cfg.set("ssh_allow_ips", ["1.2.3.4", "2001:db8::1"])
+        txt = nft.render(cfg)
+        self.assertIn("ip saddr {1.2.3.4} tcp dport 2222 accept", txt)
+        self.assertIn("ip6 saddr {2001:db8::1} tcp dport 2222 accept", txt)
+        self.assertIn("tcp dport 2222 drop", txt)
+        # 空列表恢复默认
+        cfg.set("ssh_allow_ips", [])
+        txt = nft.render(cfg)
+        self.assertIn("tcp dport 2222 accept   # SSH 保护(不可删除)", txt)
+        self.assertNotIn("tcp dport 2222 drop", txt)
+
+    def test_ssh_allow_ips_api(self):
+        """SSH 白名单 API：设置/查询/非法 IP"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        code, d = self._req("POST", "/api/ssh/allow-ips",
+                            {"ips": "1.2.3.4, 5.6.7.0/24"}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/ssh/allow-ips", token=token)
+        self.assertEqual(sorted(d["ips"]), ["1.2.3.4", "5.6.7.0/24"])
+        # 非法 IP
+        code, d = self._req("POST", "/api/ssh/allow-ips",
+                            {"ips": "999.1.1.1"}, token=token)
+        self.assertEqual(code, 400)
+        # 清空恢复
+        code, d = self._req("POST", "/api/ssh/allow-ips",
+                            {"ips": ""}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/ssh/allow-ips", token=token)
+        self.assertEqual(d["ips"], [])
+
     def test_upgrade_api_check(self):
         code, d = self._req("POST", "/api/login",
                             {"username": TEST_USER, "password": "NewPass123"})
