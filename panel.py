@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.21.2"
+CURRENT_VERSION = "1.21.3"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -2126,8 +2126,9 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.server.store.add({"type": "port_allow", "proto": proto, "port": port,
                                    "comment": f"服务:{name}"})
         elif not enabled:
+            # 关闭服务：删除该端口全部非保护放行规则（含手动开放的「面板开放」注释规则）
             for r in existing:
-                if r.get("comment") == f"服务:{name}":
+                if not r.get("protected"):
                     self.server.store.remove(r["id"])
         ok, msg = self.server.nft.apply()
         if not ok:
