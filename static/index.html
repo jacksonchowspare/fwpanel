@@ -31,27 +31,35 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 @media (max-width: 1080px) { .grid2 { grid-template-columns: 1fr; } }
 /* 手机端适配 */
 @media (max-width: 720px) {
-  .wrap { padding: 14px 10px 40px; }
-  .topbar { flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+  .wrap { padding: 12px 10px 40px; }
+  body { font-size: 13px; }
+  h1 { font-size: 17px; }
+  .sub { font-size: 11px; margin-bottom: 14px; }
+  .topbar { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
   .topbar .actions { width: 100%; flex-wrap: wrap; gap: 6px; }
-  .topbar .actions .btn { flex: 1; min-width: 90px; padding: 6px 8px; }
-  .cards { grid-template-columns: 1fr 1fr; }
-  .card { padding: 12px 12px; }
-  .card .v { font-size: 16px; }
-  .panel { padding: 12px; margin-bottom: 14px; }
-  .panel h2 { font-size: 14px; margin-bottom: 10px; }
+  .topbar .actions .btn { flex: 1; min-width: 88px; padding: 6px 8px; font-size: 13px; }
+  .cards { grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .card { padding: 10px 12px; }
+  .card .k { font-size: 11px; }
+  .card .v { font-size: 15px; margin-top: 2px; }
+  .panel { padding: 12px; margin-bottom: 12px; }
+  .panel h2 { font-size: 13px; margin-bottom: 10px; }
   /* 表格横向滚动，避免整页错位 */
   table { display: block; overflow-x: auto; white-space: nowrap; }
-  th, td { padding: 7px 8px; }
+  th, td { padding: 6px 8px; font-size: 12px; }
   /* 弹窗自适应屏幕（覆盖内联固定宽度） */
-  .modal { width: calc(100vw - 24px) !important; padding: 18px; }
+  .modal { width: calc(100vw - 24px) !important; padding: 16px; }
+  .modal h3 { font-size: 15px; }
   /* 添加规则按钮跨整行 */
   #add_rule_row .btn { grid-column: span 2; }
-  .svc .cs-port { width: 60px; }
-  .svc .cs-proto { width: 56px; }
+  .svc .cs-port { width: 58px; }
+  .svc .cs-proto { width: 54px; }
+  .svc .name { font-size: 13px; }
+  .svc .desc { font-size: 11px; }
   /* ≥16px 防止 iOS/移动端输入框聚焦自动放大 */
-  input, select { font-size: 16px; }
-  .btn { font-size: 14px; }
+  input, select { font-size: 16px; padding: 6px 9px; }
+  .btn { font-size: 13px; padding: 6px 10px; }
+  .btn.mini { font-size: 11px; padding: 3px 7px; }
 }
 /* 添加规则表单：等分布局占满全宽，IP 输入框弹性伸展 */
 #add_rule_row { display: grid; grid-template-columns: 150px 100px 130px 1fr 170px auto; gap: 8px; align-items: center; }
