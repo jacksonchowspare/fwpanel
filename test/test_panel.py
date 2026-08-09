@@ -1073,7 +1073,7 @@ class TestAPI(unittest.TestCase):
     def test_open_port_comment(self):
         """开放端口支持自定义注释（服务开关用「服务:标签」区分规则）"""
         code, d = self._req("POST", "/api/login",
-                            {"username": TEST_USER, "password": TEST_PASS})
+                            {"username": TEST_USER, "password": "NewPass123"})
         self.assertEqual(code, 200)
         token = d["token"]
         port = 31555
