@@ -19,7 +19,7 @@
 curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash
 ```
 
-> root 用户可直接去掉 `sudo`；普通用户有 sudo 时脚本自动提权。**已安装时重跑 = 自动升级**（备份旧版 → 覆盖 → 校验 → 重启，配置/规则/代理全部保留），不会重复安装。
+> root 用户可直接去掉 `sudo`；普通用户有 sudo 时脚本自动提权。**已安装时重跑 = 自动升级**（备份旧版 → 覆盖 → 校验 → 重启，配置/规则/代理全部保留），且带**防降级保护**：服务器当前版本 ≥ 下载版本时自动跳过，绝不降级。
 
 安装过程全自动：
 - 自动识别发行版并安装依赖：python3 / nftables / curl / wget / sudo，缺什么装什么
@@ -66,8 +66,8 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 - **IPv6 设置**：IPv4 优先（gai.conf precedence）/ 禁用 IPv6 / 开启 IPv6，sysctl 持久化 + 立即生效
 
 ### 反向代理（Nginx）
-- 域名绑定反代（HTTP/HTTPS、WebSocket、HTTP→HTTPS 跳转）
-- ACME 证书一键申请 / 手动续期 / 证书路径一键复制；**单独申请 SSL 证书模块**（无需配置反代，独立管理多域名证书）
+- 域名绑定反代（HTTP/HTTPS、WebSocket 勾选、HTTP→HTTPS 跳转、**HSTS 支持**），列表「功能」列显示启用的 WS / HSTS
+- ACME 证书一键申请 / 手动续期 / 证书路径一键复制；**单独申请 SSL 证书模块**（无需配置反代，独立管理多域名证书），状态行显示 **certbot 自动续期状态 + 下次检测时间**（中文格式）
 - 一键安装 nginx + certbot（自动识别 apt/pacman/dnf），证书申请前自动写入 ACME 挑战路径配置并 reload nginx
 - **禁止公网直连**：
   - nginx 兜底 default_server 接管：IP 直连 80 返回 444、443 直接拒绝 TLS 握手
@@ -77,6 +77,7 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 
 ### 面板体验
 - **手机/平板自适应**：紧凑布局、表格横向滚动、弹窗适配屏幕、iOS 聚焦缩放自动复位
+- **登录页**：底部显示当前版本号（自动注入）+ GitHub 项目链接（图标本地化内嵌）
 - **重启面板**：右上角一键重启服务，自动重连
 - **账户设置**：修改用户名 + 密码（双次确认）
 - **系统更新**：自动检测新版本（GitHub API 重试 + jsDelivr 兜底）+ 一键升级（下载→校验→备份→替换→失败回滚）
@@ -85,7 +86,7 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 ## 升级
 
 - 面板内「🔄 系统更新」→ 一键升级
-- 或 SSH 重跑一键安装命令（自动升级模式，保留全部配置）
+- 或 SSH 重跑一键安装命令（自动升级模式，保留全部配置，防降级）
 
 ## 卸载
 
@@ -100,4 +101,5 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 - **SSH 白名单**：保存前确认你的出口 IP 已在列表，否则 SSH 立即断开（可用云控制台 VNC 救援，删除 `/etc/fwpanel/config.json` 中 `ssh_allow_ips` 后重启面板恢复）
 - 封禁 IP 前确认不会封到自己的出口 IP；关闭防火墙 = 完全暴露，仅建议排查问题时短暂使用
 - 反代目标端口请勿在防火墙 / 云安全组单独放行（公网只能经 80/443 入口访问）
-- 申请证书需要 80 端口公网可达（ACME 挑战；严格模式下请先放行 80）
+- 申请证书需要 80 端口公网可达（ACME 挑战；严格模式下请先放行 80）；**证书自动续期同样依赖 80 可达**（certbot systemd timer 每天检查，到期前 30 天自动续签）
+- HSTS 启用后浏览器将强制 HTTPS 访问（含子域名），仅在确认站点全程 HTTPS 时开启
