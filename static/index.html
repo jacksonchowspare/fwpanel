@@ -122,6 +122,7 @@ tr:hover td { background: #1d2733; }
 .modal h3 { margin-bottom: 14px; }
 .modal .form-row { flex-direction: column; }
 .modal input { width: 100%; }
+.modal input[type="checkbox"] { width: auto; flex: none; }
 .modal .btnrow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 </style>
 </head>
@@ -453,8 +454,8 @@ tr:hover td { background: #1d2733; }
         <span style="font-size:13px">协议</span>
         <select id="pxe_scheme" style="flex:1"><option value="http">http</option><option value="https">https</option></select>
       </div>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="pxe_ws"> WebSocket 支持</label>
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="HTTP Strict Transport Security：强制浏览器 HTTPS 访问（仅 HTTPS 代理生效）"><input type="checkbox" id="pxe_hsts"> HSTS（强制 HTTPS，1 年含子域名）</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="pxe_ws" style="width:auto;flex:none"> WebSocket 支持</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="HTTP Strict Transport Security：强制浏览器 HTTPS 访问（仅 HTTPS 代理生效）"><input type="checkbox" id="pxe_hsts" style="width:auto;flex:none"> HSTS（强制 HTTPS，1 年含子域名）</label>
     </div>
     <div class="btnrow">
       <button class="btn ghost" onclick="closePxEdit()">取消</button>
