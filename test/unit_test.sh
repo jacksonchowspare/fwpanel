@@ -58,23 +58,27 @@ fi
 
 echo "== check_existing 已安装时进入升级（不跳过） =="
 head -n -1 "$SCRIPT" > /tmp/install_funcs_up.sh
-bash -c 'source /tmp/install_funcs_up.sh
-APP_DIR=/tmp/fwpanel-test-installed
-mkdir -p "$APP_DIR"; touch "$APP_DIR/panel.py"
+mkdir -p /tmp/fakebin
+cat > /tmp/fakebin/systemctl <<'EOF'
+#!/bin/bash
+if [ "$1" = "list-unit-files" ]; then echo "fwpanel.service enabled"; fi
+exit 0
+EOF
+chmod +x /tmp/fakebin/systemctl
+bash -c 'PATH=/tmp/fakebin:$PATH
+source /tmp/install_funcs_up.sh
 do_upgrade() { echo "UPGRADE_CALLED"; exit 0; }
 out=$(check_existing)
-echo "$out" | grep -q UPGRADE_CALLED && ok "已安装 → 进入升级流程" || bad "未进入升级: $out"
-rm -rf /tmp/fwpanel-test-installed'
+echo "$out" | grep -q UPGRADE_CALLED && ok "已安装 → 进入升级流程" || bad "未进入升级: $out"'
 
 echo "== check_existing 体检模式已安装不升级 =="
-bash -c 'source /tmp/install_funcs_up.sh
-APP_DIR=/tmp/fwpanel-test-installed
-mkdir -p "$APP_DIR"; touch "$APP_DIR/panel.py"
+bash -c 'PATH=/tmp/fakebin:$PATH
+source /tmp/install_funcs_up.sh
 do_upgrade() { echo "UPGRADE_CALLED"; exit 0; }
 out=$(check_existing check)
-echo "$out" | grep -q UPGRADE_CALLED && bad "体检模式不应升级" || ok "体检模式跳过升级"
-rm -rf /tmp/fwpanel-test-installed'
+echo "$out" | grep -q UPGRADE_CALLED && bad "体检模式不应升级" || ok "体检模式跳过升级"'
 rm -f /tmp/install_funcs_up.sh
+rm -rf /tmp/fakebin
 
 echo "== gen_initial_rules 生成 SSH+面板端口放行 =="
 RULES_TMP="$(mktemp -u)"
