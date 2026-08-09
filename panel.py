@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.21.4"
+CURRENT_VERSION = "1.21.5"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1141,13 +1141,27 @@ def ensure_nginx_default():
     conf_dir = nginx_conf_dir()
     if not conf_dir or DRY_RUN:
         return
-    # 禁用发行版自带默认站点（避免其抢占 default_server）
+    # 禁用发行版自带默认站点：必须移出 sites-enabled 目录
+    # （Debian include sites-enabled/* 不限后缀，仅改名 .bak 仍会被加载 → duplicate default_server）
     for f in ("/etc/nginx/sites-enabled/default",
               "/etc/nginx/sites-enabled/000-default"):
-        if os.path.exists(f) and not os.path.exists(f + ".fwpanel-bak"):
+        if os.path.exists(f):
+            target = f.replace("/sites-enabled/", "/sites-available/") + ".fwpanel-bak"
+            if not os.path.isdir(os.path.dirname(target)):
+                target = "/etc/fwpanel/" + os.path.basename(f) + ".fwpanel-bak"
+            if not os.path.exists(target):
+                try:
+                    os.rename(f, target)
+                    log(f"已禁用系统默认站点: {f} → {target}")
+                except OSError:
+                    pass
+    # 升级清理：移除旧版兜底文件名变体（避免 duplicate default server 冲突）
+    for f in ("00-fwpanel.conf", "fwpanel.conf"):
+        p = os.path.join(conf_dir, f)
+        if os.path.isfile(p):
             try:
-                os.rename(f, f + ".fwpanel-bak")
-                log(f"已禁用系统默认站点: {f}")
+                os.remove(p)
+                log(f"已清理旧版兜底配置: {p}")
             except OSError:
                 pass
     conf = os.path.join(conf_dir, "fwpanel-default.conf")
