@@ -54,10 +54,10 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
   .modal h3 { font-size: 15px; }
   /* 添加规则按钮跨整行 */
   #add_rule_row .btn { grid-column: span 2; }
-  .svc .cs-port { width: 58px; }
-  .svc .cs-proto { width: 70px; }
-  .svc .cs-hist { width: 84px; }
-  .svc .name { font-size: 13px; }
+  .svc .cs-port { width: 68px; }
+  .svc .cs-proto { width: 96px; }
+  .svc .cs-hist { width: 102px; }
+  .svc .name { font-size: 13px; width: 54px; }
   .svc .desc { font-size: 11px; }
   /* ≥16px 防止 iOS/移动端输入框聚焦自动放大 */
   input, select { font-size: 16px; padding: 6px 9px; }
@@ -98,10 +98,11 @@ tr:hover td { background: #1d2733; }
 .svc { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed var(--border); }
 .svc-btns { display: flex; gap: 6px; }
 .svc:last-child { border-bottom: 0; }
-.svc .name { font-weight: 500; } .svc .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
-.svc .cs-port { width: 72px; padding: 4px 8px; font-size: 12px; margin-left: 8px; }
-.svc .cs-proto { width: 74px; padding: 4px 6px; font-size: 12px; margin-left: 6px; }
-.svc .cs-hist { width: 92px; padding: 4px 6px; font-size: 12px; margin-left: 6px; }
+.svc .name { font-weight: 500; width: 58px; display: inline-block; }
+.svc .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.svc .cs-port { width: 80px; padding: 4px 8px; font-size: 12px; margin-left: 8px; }
+.svc .cs-proto { width: 102px; padding: 4px 6px; font-size: 12px; margin-left: 8px; }
+.svc .cs-hist { width: 112px; padding: 4px 6px; font-size: 12px; margin-left: 8px; }
 .empty { color: var(--muted); text-align: center; padding: 24px; }
 #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #232e3b; border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; font-size: 13px; }
 #toast.err { border-color: var(--danger); color: var(--danger); }
