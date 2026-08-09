@@ -1404,6 +1404,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._serve_static("favicon.ico")
         elif path == "/api/bbr":
             self._api_bbr()
+        elif path == "/api/ipv6":
+            self._api_ipv6()
         elif path == "/api/cert":
             self._api_cert()
         elif path.startswith("/api/cert/"):
