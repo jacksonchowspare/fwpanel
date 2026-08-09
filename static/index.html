@@ -55,7 +55,8 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
   /* 添加规则按钮跨整行 */
   #add_rule_row .btn { grid-column: span 2; }
   .svc .cs-port { width: 58px; }
-  .svc .cs-proto { width: 54px; }
+  .svc .cs-proto { width: 70px; }
+  .svc .cs-hist { width: 84px; }
   .svc .name { font-size: 13px; }
   .svc .desc { font-size: 11px; }
   /* ≥16px 防止 iOS/移动端输入框聚焦自动放大 */
@@ -99,7 +100,8 @@ tr:hover td { background: #1d2733; }
 .svc:last-child { border-bottom: 0; }
 .svc .name { font-weight: 500; } .svc .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
 .svc .cs-port { width: 72px; padding: 4px 8px; font-size: 12px; margin-left: 8px; }
-.svc .cs-proto { width: 66px; padding: 4px 6px; font-size: 12px; margin-left: 6px; }
+.svc .cs-proto { width: 74px; padding: 4px 6px; font-size: 12px; margin-left: 6px; }
+.svc .cs-hist { width: 92px; padding: 4px 6px; font-size: 12px; margin-left: 6px; }
 .empty { color: var(--muted); text-align: center; padding: 24px; }
 #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #232e3b; border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; font-size: 13px; }
 #toast.err { border-color: var(--danger); color: var(--danger); }
@@ -1069,14 +1071,26 @@ async function renderSvc() {
     const p = svcRule ? svcRule.port : customSvcPort(name);
     const proto = svcRule ? svcRule.proto : (($("cs_proto_" + name) && $("cs_proto_" + name).value) || "tcp");
     const on = !!svcRule;
+    // 历史端口记录（该服务注释的全部规则，去重）
+    const histSet = new Set();
+    svcRules.forEach(r => histSet.add(r.port + "/" + r.proto));
+    const histOpts = [...histSet].map(h => `<option value="${h}">${h}</option>`).join("");
     const row = document.createElement("div"); row.className = "svc";
-    row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="${p || ""}" oninput="csPortChanged('${name}')"><select id="cs_proto_${name}" class="cs-proto" onchange="csPortChanged('${name}')"><option value="tcp"${proto === "tcp" ? " selected" : ""}>TCP</option><option value="udp"${proto === "udp" ? " selected" : ""}>UDP</option></select></span>
+    row.innerHTML = `<span><span class="name">${label}</span><input id="cs_port_${name}" class="cs-port" placeholder="端口" inputmode="numeric" value="${p || ""}" oninput="csPortChanged('${name}')"><select id="cs_proto_${name}" class="cs-proto" onchange="csPortChanged('${name}')"><option value="tcp"${proto === "tcp" ? " selected" : ""}>TCP</option><option value="udp"${proto === "udp" ? " selected" : ""}>UDP</option><option value="both"${proto === "both" ? " selected" : ""}>TCP+UDP</option></select><select id="cs_hist_${name}" class="cs-hist" onchange="csHistPick('${name}')"><option value="">历史端口</option>${histOpts}</select></span>
       <span class="svc-btns">
         <button class="btn mini" onclick="svcCusAllow('${name}')" ${on ? "disabled" : ""}>放行</button>
         <button class="btn mini danger" onclick="svcCusClose('${name}')" ${on ? "" : "disabled"}>关闭</button>
       </span>`;
     list.appendChild(row);
   }
+}
+function csHistPick(name) {
+  const sel = $("cs_hist_" + name);
+  if (!sel || !sel.value) return;
+  const [port, proto] = sel.value.split("/");
+  const pe = $("cs_port_" + name); if (pe) pe.value = port;
+  const se = $("cs_proto_" + name); if (se) se.value = proto;
+  csPortChanged(name);
 }
 async function svcAllow(name) {
   try { await api("POST", "/api/service", { name, enabled: true }); toast("已放行", "okk"); refreshAll(); }
@@ -1102,18 +1116,14 @@ async function svcCusAllow(name) {
 }
 async function svcCusClose(name) {
   const p = customSvcPort(name);
+  const proto = $("cs_proto_" + name).value;
   const label = (CUSTOM_SVCS.find(x => x[0] === name) || ["", name])[1];
-  const proto = ($("cs_proto_" + name) && $("cs_proto_" + name).value) || "tcp";
-  confirmPanel(`确认关闭 ${label}？\n\n将删除该服务的全部放行规则（含改端口后残留的旧端口规则）。`, () => {
-    api("GET", "/api/rules").then(async d => {
-      const mine = d.rules.filter(x => x.type === "port_allow" && x.comment === "服务:" + label && !x.protected);
-      for (const r of mine) await api("DELETE", "/api/rules/" + r.id);
-      if (!mine.length) {
-        // 兼容旧规则（「面板开放」注释）：按端口+协议删除
-        const r = d.rules.find(x => x.type === "port_allow" && x.port == p && x.proto === proto && !x.protected);
-        if (r) await api("DELETE", "/api/rules/" + r.id);
-      }
-      toast(`${label} 已关闭`, "okk"); refreshAll();
+  if (!(p >= 1 && p <= 65535)) { toast("请先选择或填写要关闭的端口", "err"); return; }
+  const protoName = { tcp: "TCP", udp: "UDP", both: "TCP+UDP" }[proto] || proto;
+  confirmPanel(`确认关闭 ${label} ${p}/${protoName}？\n\n将删除该端口的放行规则（TCP 会连 TCP+UDP 一起删；TCP+UDP 删该端口全部放行）。`, () => {
+    api("POST", "/api/close-port", { port: p, proto }).then(d => {
+      toast(`${label} ${p}/${protoName} 已关闭`, "okk");
+      refreshAll();
     }).catch(e => toast(e.message, "err"));
   }, "🚫 关闭服务");
 }
