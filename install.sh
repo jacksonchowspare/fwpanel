@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.19.9"
+readonly SCRIPT_VERSION="1.20.0"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -362,7 +362,7 @@ cfg = {
     "password_hash": f"{salt}${dk.hex()}",
     "port": int(port),
     "bind": bind,
-    "mode": "permissive",
+    "mode": "strict",
     "ssh_port": ssh_port,
     "ssh_port_auto": True,      # 自动跟随系统 SSH 端口；面板手动设置后关闭
 }
