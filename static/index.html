@@ -69,6 +69,10 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 /* 添加规则表单：等分布局占满全宽，IP 输入框弹性伸展 */
 #add_rule_row { display: grid; grid-template-columns: 150px 100px 130px 1fr 170px auto; gap: 8px; align-items: center; }
 @media (max-width: 1080px) { #add_rule_row { grid-template-columns: 1fr 1fr; } }
+/* 添加代理表单：网格等分布局 */
+#add_proxy_row { display: grid; grid-template-columns: 1fr 1fr 90px 100px auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+#add_proxy_row input, #add_proxy_row select { width: 100%; box-sizing: border-box; }
+@media (max-width: 1080px) { #add_proxy_row { grid-template-columns: 1fr 1fr; } }
 .panel h2 { font-size: 15px; margin-bottom: 12px; }
 .btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
 .btn:hover { opacity: .88; }
@@ -181,18 +185,21 @@ tr:hover td { background: #1d2733; }
         <button class="btn" onclick="installNginx()">⚙️ 一键安装 Nginx + certbot</button>
         <span style="color:var(--muted);font-size:12px;align-self:center">自动按系统选择 apt / pacman / dnf，安装后自动写入 nginx 配置（需几分钟，期间页面等待属正常）</span>
       </div>
-      <div class="form-row" id="add_proxy_row">
-        <input id="px_domain" placeholder="域名（如 app.example.com）" style="width:180px">
-        <input id="px_host" placeholder="目标 IP/主机" style="width:120px">
-        <input id="px_port" placeholder="端口" style="width:70px" inputmode="numeric">
+      <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">➕ 添加反向代理</div>
+      <div id="add_proxy_row">
+        <input id="px_domain" placeholder="域名（如 app.example.com）">
+        <input id="px_host" placeholder="目标 IP/主机">
+        <input id="px_port" placeholder="端口" inputmode="numeric">
         <select id="px_scheme"><option value="http">http</option><option value="https">https</option></select>
-        <label class="switch" title="WebSocket 支持"><input type="checkbox" id="px_ws"><span class="slider"></span></label>
-        <span style="align-self:center;color:var(--muted);font-size:12px">WS</span>
+        <label class="switch" title="WebSocket 支持" style="display:flex;align-items:center;gap:6px;justify-self:center"><input type="checkbox" id="px_ws"><span class="slider"></span><span style="font-size:12px;color:var(--muted)">WS</span></label>
         <button class="btn" onclick="addProxy()">添加代理</button>
-        <span style="color:var(--muted);font-size:12px;align-self:center">自动放行 443、自动禁止公网直连目标端口（80 需自行放行，证书申请需要）</span>
       </div>
-      <div class="form-row" style="margin-bottom:10px">
-        <input id="px_search" placeholder="🔍 搜索代理（域名 / 目标）" style="width:240px" oninput="pxSearchChanged()">
+      <div style="color:var(--muted);font-size:12px;margin-bottom:12px">自动放行 443、自动禁止公网直连目标端口（80 需自行放行，证书申请需要）</div>
+      <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+        <span style="font-size:13px;font-weight:600">📋 代理列表</span>
+        <input id="px_search" placeholder="🔍 搜索代理（域名 / 目标）" style="width:220px" oninput="pxSearchChanged()">
       </div>
       <div class="table-wrap">
       <table>
