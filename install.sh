@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
-readonly SCRIPT_VERSION="1.22.16"
+readonly SCRIPT_VERSION="1.22.17"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -188,11 +188,12 @@ do_upgrade() {
         cp "$bak" "$APP_DIR/panel.py" 2>/dev/null
         exit 1
     fi
-    # 重启服务
-    if systemctl list-unit-files 2>/dev/null | grep -q "$SERVICE_NAME"; then
-        systemctl restart "$SERVICE_NAME" 2>/dev/null && log_info "服务已重启: $SERVICE_NAME"
+    # 重启服务（尝试常见服务名，兼容旧版安装的命名差异）
+    if systemctl restart fwpanel 2>/dev/null || systemctl restart fwpanel.service 2>/dev/null; then
+        log_info "服务已重启: fwpanel"
     else
-        log_warn "未找到 systemd 服务，请手动重启面板"
+        log_warn "未能自动重启面板服务，请手动执行: systemctl restart fwpanel"
+        log_warn "（若服务名不同，可先查看: systemctl list-unit-files | grep -i fw）"
     fi
     log_info "升级完成 ✓ 配置/规则已保留；页面请强制刷新（Ctrl+F5）"
 }
