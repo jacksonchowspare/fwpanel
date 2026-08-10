@@ -308,9 +308,11 @@ tr:hover td { background: #1d2733; }
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📋 Docker Compose</div>
       <textarea id="dk_compose" placeholder="粘贴 docker-compose.yml 内容..." style="width:100%;min-height:120px;font-family:monospace;font-size:12px;box-sizing:border-box;margin-bottom:8px"></textarea>
       <div class="form-row" style="margin-bottom:8px">
+        <input id="dk_compose_folder" placeholder="文件夹名称（留空自动取第一个镜像名，多镜像时建议填写）" style="flex:1;min-width:200px">
         <button class="btn" onclick="composeUp()">🚀 Compose 启动</button>
         <button class="btn ghost" onclick="composeDown()">⏹ Compose 停止</button>
       </div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:8px">文件将保存到 /DockerData/dockercompose/&lt;文件夹名称&gt;/docker-compose.yml；留空时自动按 yml 里第一个镜像名命名（如 nginx:latest → nginx）</div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📊 资源监控</div>
       <div class="form-row" style="margin-bottom:8px">
@@ -1742,10 +1744,11 @@ function setDockerDataRoot() {
 async function composeUp() {
   const content = $("dk_compose").value;
   if (!content.trim()) { toast("请先粘贴 docker-compose.yml 内容", "err"); return; }
+  const folder = $("dk_compose_folder").value.trim();
   try {
-    const d = await api("POST", "/api/docker/compose/up", { content });
+    const d = await api("POST", "/api/docker/compose/up", { content, folder });
     toast(d.msg || "启动完成", d.ok ? "okk" : "err");
-    if (d.ok) loadDocker();
+    if (d.ok) { $("dk_compose").value = ""; $("dk_compose_folder").value = ""; loadDocker(); }
   } catch (e) { toast(e.message, "err"); }
 }
 

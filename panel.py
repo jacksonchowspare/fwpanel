@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.10"
+CURRENT_VERSION = "1.24.11"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1672,17 +1672,27 @@ def _compose_dir_from_content(content):
     return name
 
 
-def _compose_file_for(content):
-    """compose 文件路径：/DockerData/dockercompose/<镜像名>/docker-compose.yml"""
-    return os.path.join(COMPOSE_BASE, _compose_dir_from_content(content), "docker-compose.yml")
+def _compose_dir_name(content, folder=""):
+    """确定 compose 子目录名：用户指定 folder 优先（安全净化），留空取第一个镜像名"""
+    folder = (folder or "").strip()
+    if folder:
+        folder = re.sub(r"[^A-Za-z0-9_.-]", "", folder)
+        return folder or _compose_dir_from_content(content)
+    return _compose_dir_from_content(content)
 
 
-def docker_compose_up(content):
-    """保存 docker-compose.yml 到 /DockerData/dockercompose/<镜像名>/ 并启动（兼容旧路径自动迁移）"""
+def _compose_file_for(content, folder=""):
+    """compose 文件路径：/DockerData/dockercompose/<目录名>/docker-compose.yml"""
+    return os.path.join(COMPOSE_BASE, _compose_dir_name(content, folder), "docker-compose.yml")
+
+
+def docker_compose_up(content, folder=""):
+    """保存 docker-compose.yml 到 /DockerData/dockercompose/<目录名>/ 并启动。
+    folder 非空用用户指定目录名（安全净化），留空自动取 yml 第一个镜像名。兼容旧路径自动迁移"""
     if DRY_RUN:
         return True, "DRY_RUN: compose up"
     try:
-        compose_file = _compose_file_for(content)
+        compose_file = _compose_file_for(content, folder)
         d = os.path.dirname(compose_file)
         os.makedirs(d, exist_ok=True)
         # 旧路径存在且新路径不存在 → 迁移（保留旧数据目录一致）
@@ -2606,7 +2616,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_compose_up(self):
-        """POST /api/docker/compose/up {content} → 保存并启动 compose"""
+        """POST /api/docker/compose/up {content, folder} → 保存并启动 compose"""
         token = self._require_auth()
         if token is None:
             return
@@ -2615,7 +2625,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         if not content.strip():
             self._send(400, {"error": "docker-compose.yml 内容不能为空"})
             return
-        ok, msg = docker_compose_up(content)
+        ok, msg = docker_compose_up(content, str(data.get("folder", "")))
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_compose_down(self):

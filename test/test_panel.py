@@ -1961,7 +1961,7 @@ class TestDocker(unittest.TestCase):
 
     def test_docker_compose_up(self):
         tok = self._token()
-        saved = self._patch_docker(docker_compose_up=lambda c: (True, "up"))
+        saved = self._patch_docker(docker_compose_up=lambda content, folder="": (True, "up"))
         try:
             code, d = self._req("POST", "/api/docker/compose/up",
                                 {"content": "services:\n  web:\n    image: nginx\n"}, token=tok)
@@ -2263,6 +2263,30 @@ class TestDocker(unittest.TestCase):
         finally:
             panel.subprocess.run = real_run
             panel.DOCKER_DATA_BASE = real_base
+            panel.DRY_RUN = real_dry
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_compose_custom_folder_priority(self):
+        """用户指定 folder 时优先用 folder 名，不用第一个镜像名"""
+        import types
+        real_run = panel.subprocess.run
+        real_base = panel.COMPOSE_BASE
+        real_dry = panel.DRY_RUN
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-compose-folder-")
+            panel.COMPOSE_BASE = os.path.join(tmp, "dockercompose")
+            panel.DRY_RUN = False
+            panel.subprocess.run = lambda args, **kw: types.SimpleNamespace(
+                returncode=0, stdout="", stderr="")
+            content = "services:\n  web:\n    image: nginx:latest\n  db:\n    image: redis:7\n"
+            ok, msg = panel.docker_compose_up(content, folder="my-web")
+            self.assertTrue(ok)
+            expected = os.path.join(tmp, "dockercompose", "my-web", "docker-compose.yml")
+            self.assertTrue(os.path.exists(expected))
+            self.assertIn("my-web", msg)
+        finally:
+            panel.subprocess.run = real_run
+            panel.COMPOSE_BASE = real_base
             panel.DRY_RUN = real_dry
             shutil.rmtree(tmp, ignore_errors=True)
 
