@@ -235,6 +235,75 @@ tr:hover td { background: #1d2733; }
       </div>
     </div>
 
+    <div class="panel">
+      <h2>🐳 Docker 容器管理</h2>
+      <div id="docker_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
+      <div id="docker_install_area" style="display:none;margin-bottom:10px">
+        <div class="form-row">
+          <span style="color:var(--muted);font-size:12px">Docker 未安装，点击安装（自动识别 apt / pacman / dnf，含 docker compose 插件）：</span>
+          <button class="btn" onclick="installDocker()">一键安装 Docker</button>
+        </div>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📦 容器列表</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <input id="dk_search" placeholder="搜索容器名/镜像/状态" style="flex:1;min-width:160px" oninput="renderDocker()">
+        <button class="btn ghost" onclick="refreshDocker()">🔄 刷新</button>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>名称</th><th>镜像</th><th>状态</th><th>端口</th><th>操作</th></tr></thead>
+        <tbody id="dk_rows"><tr><td colspan="5" style="color:var(--muted)">未安装 Docker 或暂无容器</td></tr></tbody>
+      </table>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px" id="dk_pager">
+        <button class="btn mini ghost" onclick="dkPageGo(-1)" id="dk_prev">上一页</button>
+        <span style="color:var(--muted);font-size:12px" id="dk_pageinfo">1/1</span>
+        <button class="btn mini ghost" onclick="dkPageGo(1)" id="dk_next">下一页</button>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">➕ 创建容器</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <input id="dk_name" placeholder="容器名称" style="flex:1;min-width:120px">
+        <input id="dk_image" placeholder="镜像（如 nginx:latest）" style="flex:1;min-width:160px">
+        <input id="dk_ports" placeholder="端口映射 80:80（多个逗号分隔）" style="flex:1;min-width:160px">
+        <input id="dk_envs" placeholder="环境变量 KEY=V（多个逗号分隔）" style="flex:1;min-width:140px">
+        <button class="btn" onclick="createDocker()">创建容器</button>
+      </div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:12px">端口映射格式：宿主机端口:容器端口（如 8080:80）；环境变量格式：KEY=值，多个用逗号分隔</div>
+      <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">🖼 镜像管理</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <input id="dk_pull_name" placeholder="镜像名:tag（如 nginx:latest）" style="flex:1;min-width:200px">
+        <button class="btn" onclick="pullDocker()">拉取镜像</button>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>仓库</th><th>标签</th><th>大小</th><th>ID</th><th>操作</th></tr></thead>
+        <tbody id="dk_img_rows"><tr><td colspan="5" style="color:var(--muted)">未安装 Docker 或暂无镜像</td></tr></tbody>
+      </table>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📋 Docker Compose</div>
+      <textarea id="dk_compose" placeholder="粘贴 docker-compose.yml 内容..." style="width:100%;min-height:120px;font-family:monospace;font-size:12px;box-sizing:border-box;margin-bottom:8px"></textarea>
+      <div class="form-row" style="margin-bottom:8px">
+        <button class="btn" onclick="composeUp()">🚀 Compose 启动</button>
+        <button class="btn ghost" onclick="composeDown()">⏹ Compose 停止</button>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📊 资源监控</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <span style="color:var(--muted);font-size:12px" id="dk_stats_hint">运行中容器实时 CPU / 内存 / 网络 IO</span>
+        <button class="btn ghost" onclick="loadDockerStats()">🔄 刷新监控</button>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>容器</th><th>CPU</th><th>内存</th><th>内存%</th><th>网络 IO</th><th>磁盘 IO</th></tr></thead>
+        <tbody id="dk_stats_rows"><tr><td colspan="6" style="color:var(--muted)">无运行中容器</td></tr></tbody>
+      </table>
+      </div>
+    </div>
+
     <div class="grid2">
       <div class="col">
         <div class="panel">
@@ -469,6 +538,7 @@ tr:hover td { background: #1d2733; }
   <div class="modal" style="width:380px">
     <h3 id="cfm_title">确认操作</h3>
     <div id="cfm_msg" style="color:var(--muted);font-size:13px;margin-bottom:16px;white-space:pre-line"></div>
+    <div id="cfm_slot" style="display:none;margin-bottom:16px"></div>
     <div class="btnrow">
       <button class="btn ghost" onclick="closeCfm()">取消</button>
       <button class="btn" id="cfm_ok_btn" onclick="cfmOk()">确定</button>
@@ -490,9 +560,14 @@ function toast(msg, type) {
 }
 /* 面板风格确认弹窗 */
 let cfmCallback = null;
-function confirmPanel(msg, onOk, title) {
+function confirmPanel(msg, onOk, title, contentEl) {
   $("cfm_title").textContent = title || "确认操作";
-  $("cfm_msg").textContent = msg;
+  const msgEl = $("cfm_msg");
+  msgEl.textContent = msg;
+  msgEl.style.display = msg ? "" : "none";
+  const slot = $("cfm_slot");
+  if (contentEl) { slot.innerHTML = ""; slot.appendChild(contentEl); slot.style.display = ""; }
+  else { slot.innerHTML = ""; slot.style.display = "none"; }
   cfmCallback = onOk;
   $("cfm_modal").classList.remove("hidden");
 }
@@ -578,7 +653,7 @@ async function refreshAll() {
     $("st_ver").textContent = "v" + status.version;
     $("panel_port_input").value = status.panel_port || "";
     $("st_ver").textContent = "v" + status.version;
-    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadIpv6(); autoCheckUpgrade();
+    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadIpv6(); loadDocker(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
 
@@ -1441,6 +1516,196 @@ async function changePwd() {
     toast("账户设置已更新，下次登录生效", "okk");
     closePwd(); refreshAll();
   } catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------- Docker 模块（v1.24.0） ---------- */
+let dkContainers = [], dkImages = [], dkStats = [];
+let dkPage = 1; const DK_PAGE_SIZE = 5;
+
+async function loadDocker() {
+  try {
+    const st = await api("GET", "/api/docker");
+    if (!st.installed) {
+      $("docker_status").textContent = "Docker 未安装";
+      $("docker_status").className = "v off";
+      $("docker_install_area").style.display = "";
+      $("dk_rows").innerHTML = '<tr><td colspan="5" style="color:var(--muted)">请先安装 Docker</td></tr>';
+      return;
+    }
+    $("docker_install_area").style.display = "none";
+    const svc = st.service_active ? "服务运行中" : "⚠ 服务未运行";
+    $("docker_status").textContent = `Docker 已安装 · ${st.version || ""} · ${svc} · 容器 ${st.running}/${st.containers}`;
+    $("docker_status").className = "v " + (st.service_active ? "ok" : "off");
+    const [c, im, s] = await Promise.all([
+      api("GET", "/api/docker/containers"),
+      api("GET", "/api/docker/images"),
+      api("GET", "/api/docker/stats"),
+    ]);
+    dkContainers = c.containers || []; dkImages = im.images || []; dkStats = s.stats || [];
+    renderDocker(); renderDockerImages(); renderDockerStats();
+  } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
+}
+
+function refreshDocker() { loadDocker(); }
+
+function renderDocker() {
+  const kw = ($("dk_search").value || "").trim().toLowerCase();
+  const filtered = dkContainers.filter(c =>
+    !kw || (c.name + " " + c.image + " " + c.status).toLowerCase().includes(kw));
+  const total = filtered.length, pages = Math.max(1, Math.ceil(total / DK_PAGE_SIZE));
+  if (dkPage > pages) dkPage = pages;
+  const list = filtered.slice((dkPage - 1) * DK_PAGE_SIZE, dkPage * DK_PAGE_SIZE);
+  const tb = $("dk_rows");
+  if (!list.length) {
+    tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted)">${total ? "无匹配" : "暂无容器"}</td></tr>`;
+  } else {
+    tb.innerHTML = list.map(c => `
+      <tr>
+        <td>${c.name}</td><td>${c.image}</td>
+        <td><span class="v ${c.running ? "ok" : "off"}">${c.status}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${c.ports || "—"}</td>
+        <td>
+          <button class="btn mini ${c.running ? "ghost" : ""}" onclick="dkAct('${c.id}','${c.running ? "stop" : "start"}')">${c.running ? "停止" : "启动"}</button>
+          <button class="btn mini ghost" onclick="dkAct('${c.id}','restart')">重启</button>
+          <button class="btn mini ghost" onclick="dkLogs('${c.id}')">日志</button>
+          <button class="btn mini danger" onclick="dkDel('${c.id}','${c.name}')">删除</button>
+        </td>
+      </tr>`).join("");
+  }
+  const pager = $("dk_pager");
+  pager.style.display = total > DK_PAGE_SIZE ? "flex" : "none";
+  $("dk_pageinfo").textContent = `${dkPage}/${pages}`;
+  $("dk_prev").disabled = dkPage <= 1;
+  $("dk_next").disabled = dkPage >= pages;
+}
+
+function dkPageGo(d) { dkPage += d; renderDocker(); }
+
+async function dkAct(id, act) {
+  try {
+    const d = await api("POST", "/api/docker/action", { action: act, id });
+    toast(d.msg || "操作成功", d.ok ? "okk" : "err");
+    loadDocker();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function dkDel(id, name) {
+  confirmPanel(`确定删除容器 ${name}？\n\n删除后不可恢复。`, () => dkAct(id, "remove"), "删除容器");
+}
+
+async function dkLogs(id) {
+  try {
+    const d = await api("GET", "/api/docker/logs/" + id);
+    const el = document.createElement("div");
+    el.style.cssText = "max-height:400px;overflow:auto;background:#0d1218;border:1px solid var(--border);border-radius:8px;padding:10px;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all";
+    el.textContent = d.logs || "（无日志）";
+    confirmPanel("", () => { closeCfm(); }, "📜 容器日志", el);
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function renderDockerImages() {
+  const tb = $("dk_img_rows");
+  if (!dkImages.length) {
+    tb.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无镜像</td></tr>';
+    return;
+  }
+  tb.innerHTML = dkImages.map(im => `
+    <tr>
+      <td>${im.repository}</td><td>${im.tag}</td><td>${im.size}</td>
+      <td style="font-size:12px;color:var(--muted)">${im.id}</td>
+      <td><button class="btn mini danger" onclick="dkRmi('${im.id}')">删除</button></td>
+    </tr>`).join("");
+}
+
+function dkRmi(id) {
+  confirmPanel(`确定删除镜像 ${id}？\n\n被容器使用的镜像无法删除。`, async () => {
+    try {
+      const d = await api("POST", "/api/docker/rmi", { id });
+      toast(d.msg || "已删除", d.ok ? "okk" : "err");
+      loadDocker();
+    } catch (e) { toast(e.message, "err"); }
+  }, "删除镜像");
+}
+
+async function pullDocker() {
+  const name = $("dk_pull_name").value.trim();
+  if (!name) { toast("请输入镜像名", "err"); return; }
+  try {
+    const d = await api("POST", "/api/docker/pull", { name });
+    toast(d.msg || "拉取完成", d.ok ? "okk" : "err");
+    if (d.ok) { $("dk_pull_name").value = ""; loadDocker(); }
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function createDocker() {
+  const name = $("dk_name").value.trim(), image = $("dk_image").value.trim();
+  if (!name || !image) { toast("容器名称和镜像不能为空", "err"); return; }
+  confirmPanel(`创建容器：${name}\n镜像：${image}\n端口：${$("dk_ports").value.trim() || "无"}\n环境变量：${$("dk_envs").value.trim() || "无"}`, async () => {
+    try {
+      const d = await api("POST", "/api/docker/create", {
+        name, image,
+        ports: $("dk_ports").value.trim(),
+        envs: $("dk_envs").value.trim(),
+      });
+      toast(d.msg || "创建完成", d.ok ? "okk" : "err");
+      if (d.ok) { ["dk_name", "dk_image", "dk_ports", "dk_envs"].forEach(id => $(id).value = ""); loadDocker(); }
+    } catch (e) { toast(e.message, "err"); }
+  }, "创建容器");
+}
+
+async function composeUp() {
+  const content = $("dk_compose").value;
+  if (!content.trim()) { toast("请先粘贴 docker-compose.yml 内容", "err"); return; }
+  try {
+    const d = await api("POST", "/api/docker/compose/up", { content });
+    toast(d.msg || "启动完成", d.ok ? "okk" : "err");
+    if (d.ok) loadDocker();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function composeDown() {
+  confirmPanel("确定停止并移除 Compose 服务？", async () => {
+    try {
+      const d = await api("POST", "/api/docker/compose/down", {});
+      toast(d.msg || "已停止", d.ok ? "okk" : "err");
+      if (d.ok) loadDocker();
+    } catch (e) { toast(e.message, "err"); }
+  }, "停止 Compose");
+}
+
+async function loadDockerStats() {
+  try {
+    const d = await api("GET", "/api/docker/stats");
+    dkStats = d.stats || [];
+    renderDockerStats();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function renderDockerStats() {
+  const tb = $("dk_stats_rows");
+  if (!dkStats.length) {
+    tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">无运行中容器</td></tr>';
+    return;
+  }
+  tb.innerHTML = dkStats.map(s => `
+    <tr>
+      <td>${s.name}</td><td>${s.cpu}</td><td>${s.mem}</td><td>${s.mem_pct}</td>
+      <td style="font-size:12px;color:var(--muted)">${s.net}</td>
+      <td style="font-size:12px;color:var(--muted)">${s.block}</td>
+    </tr>`).join("");
+}
+
+function installDocker() {
+  confirmPanel("确定一键安装 Docker？\n\n将自动安装 docker + compose 插件并启动服务（需几分钟）。", async () => {
+    const btn = event.target;
+    btn.disabled = true; btn.textContent = "安装中...（几分钟）";
+    try {
+      const d = await api("POST", "/api/docker/install", {});
+      toast(d.msg || "安装完成", d.ok ? "okk" : "err");
+      loadDocker();
+    } catch (e) { toast(e.message, "err"); }
+    btn.disabled = false; btn.textContent = "一键安装 Docker";
+  }, "安装 Docker");
 }
 
 /* ---------- 初始化 ---------- */

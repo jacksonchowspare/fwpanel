@@ -1716,5 +1716,204 @@ class TestUpgrade(unittest.TestCase):
             self.assertIn("old panel", f.read())
 
 
+class TestDocker(unittest.TestCase):
+    """Docker 模块 API 测试：mock docker_* 辅助函数（真实环境无 docker）"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg = make_cfg()
+        cls.store = panel.RuleStore()
+        cls.store.rules = []
+        cls.nft = panel.NFTManager(cls.store, cls.cfg)
+        cls.auth = panel.Auth(cls.cfg)
+        cls.server = panel.PanelServer(("127.0.0.1", 17998), panel.PanelHandler,
+                                       cls.cfg, cls.store, cls.nft, cls.auth)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base = "http://127.0.0.1:17998"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def _req(self, method, path, data=None, token=None):
+        req = urllib.request.Request(self.base + path, method=method)
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode()
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, body) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read())
+            except Exception:
+                return e.code, {}
+
+    def _token(self):
+        for pw in (TEST_PASS, "NewPass123"):
+            code, d = self._req("POST", "/api/login",
+                                {"username": TEST_USER, "password": pw})
+            if code == 200:
+                return d["token"]
+        raise RuntimeError("无法登录")
+
+    def _patch_docker(self, **mocks):
+        saved = {}
+        for name, fn in mocks.items():
+            saved[name] = getattr(panel, name)
+            setattr(panel, name, fn)
+        return saved
+
+    def test_docker_status_not_installed(self):
+        tok = self._token()
+        saved = self._patch_docker(docker_available=lambda: False)
+        try:
+            code, d = self._req("GET", "/api/docker", token=tok)
+            self.assertEqual(code, 200)
+            self.assertFalse(d["installed"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_status_installed(self):
+        tok = self._token()
+        saved = self._patch_docker(
+            docker_available=lambda: True,
+            docker_status=lambda: {"installed": True, "service_active": True,
+                                   "version": "Docker version 27.0.0",
+                                   "containers": 2, "running": 1})
+        try:
+            code, d = self._req("GET", "/api/docker", token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["installed"])
+            self.assertEqual(d["containers"], 2)
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_containers(self):
+        tok = self._token()
+        saved = self._patch_docker(
+            docker_containers=lambda all_: [
+                {"id": "abc123", "name": "nginx", "image": "nginx:latest",
+                 "status": "Up 2 hours", "ports": "0.0.0.0:80->80/tcp", "running": True}])
+        try:
+            code, d = self._req("GET", "/api/docker/containers", token=tok)
+            self.assertEqual(code, 200)
+            self.assertEqual(len(d["containers"]), 1)
+            self.assertEqual(d["containers"][0]["name"], "nginx")
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_action_valid(self):
+        tok = self._token()
+        saved = self._patch_docker(docker_action=lambda act, cid: (True, "ok"))
+        try:
+            code, d = self._req("POST", "/api/docker/action",
+                                {"action": "restart", "id": "abc123"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_action_invalid(self):
+        tok = self._token()
+        code, d = self._req("POST", "/api/docker/action",
+                            {"action": "hack", "id": "abc123"}, token=tok)
+        self.assertEqual(code, 400)
+
+    def test_docker_create_missing_fields(self):
+        tok = self._token()
+        code, d = self._req("POST", "/api/docker/create",
+                            {"name": "", "image": ""}, token=tok)
+        self.assertEqual(code, 400)
+
+    def test_docker_pull(self):
+        tok = self._token()
+        saved = self._patch_docker(docker_pull=lambda name: (True, "pulled"))
+        try:
+            code, d = self._req("POST", "/api/docker/pull",
+                                {"name": "nginx:latest"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_rmi(self):
+        tok = self._token()
+        saved = self._patch_docker(docker_rmi=lambda iid: (True, "removed"))
+        try:
+            code, d = self._req("POST", "/api/docker/rmi",
+                                {"id": "abc123"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_compose_up(self):
+        tok = self._token()
+        saved = self._patch_docker(docker_compose_up=lambda c: (True, "up"))
+        try:
+            code, d = self._req("POST", "/api/docker/compose/up",
+                                {"content": "services:\n  web:\n    image: nginx\n"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_compose_up_empty(self):
+        tok = self._token()
+        code, d = self._req("POST", "/api/docker/compose/up",
+                            {"content": ""}, token=tok)
+        self.assertEqual(code, 400)
+
+    def test_docker_compose_down(self):
+        tok = self._token()
+        saved = self._patch_docker(docker_compose_down=lambda: (True, "down"))
+        try:
+            code, d = self._req("POST", "/api/docker/compose/down", {}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_stats(self):
+        tok = self._token()
+        saved = self._patch_docker(
+            docker_stats=lambda: [{"name": "nginx", "cpu": "0.10%",
+                                   "mem": "10MiB / 500MiB", "mem_pct": "2.00%",
+                                   "net": "1MB / 2MB", "block": "0B / 0B"}])
+        try:
+            code, d = self._req("GET", "/api/docker/stats", token=tok)
+            self.assertEqual(code, 200)
+            self.assertEqual(len(d["stats"]), 1)
+            self.assertEqual(d["stats"][0]["name"], "nginx")
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_logs(self):
+        tok = self._token()
+        saved = self._patch_docker(docker_logs=lambda cid, tail=200: "log line 1")
+        try:
+            code, d = self._req("GET", "/api/docker/logs/abc123", token=tok)
+            self.assertEqual(code, 200)
+            self.assertIn("log line", d["logs"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

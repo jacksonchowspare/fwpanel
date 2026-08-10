@@ -65,6 +65,14 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 - **一键开启 BBR**：官方原版方案（fq + bbr），配置持久化 + 立即生效 + 回读校验；内核版本与支持状态检测（兼容模块化内核）
 - **IPv6 设置**：IPv4 优先（gai.conf precedence）/ 禁用 IPv6 / 开启 IPv6，sysctl 持久化 + 立即生效
 
+### Docker 容器管理（v1.24.0）
+- **一键安装**：自动识别 apt / pacman / dnf 安装 Docker + Compose 插件并启动服务（未安装时面板内一键完成）
+- **容器管理**：容器列表（状态/端口）+ 启动/停止/重启/删除 + 查看日志；搜索 + 分页
+- **创建容器**：容器名 / 镜像 / 端口映射（宿主机:容器，多个逗号分隔）/ 环境变量（KEY=值，多个逗号分隔）
+- **镜像管理**：拉取镜像 / 镜像列表（仓库/标签/大小）/ 删除镜像
+- **Docker Compose**：粘贴 docker-compose.yml 一键启动 / 停止（配置持久化到 /etc/fwpanel）
+- **资源监控**：运行中容器实时 CPU / 内存 / 网络 IO / 磁盘 IO（docker stats）
+
 ### 反向代理（Nginx）
 - 域名绑定反代（HTTP/HTTPS、WebSocket 勾选、HTTP→HTTPS 跳转、**HSTS 支持**），列表「功能」列显示启用的 WS / HSTS；**已添加代理可随时编辑**（协议 / WebSocket / HSTS 弹窗修改，立即生效）
 - ACME 证书一键申请 / 手动续期 / 证书路径一键复制；**单独申请 SSL 证书模块**（无需配置反代，独立管理多域名证书），状态行显示 **certbot 自动续期状态 + 下次检测时间**（中文格式）

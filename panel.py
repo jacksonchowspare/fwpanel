@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.23.30"
+CURRENT_VERSION = "1.24.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1202,6 +1202,256 @@ def install_pkgs(pkgs):
     return True, f"已安装: {' '.join(pkgs)}"
 
 
+# ---------- Docker 模块（v1.24.0）----------
+
+def docker_available():
+    """检测 docker CLI 是否存在（docker 命令本身可用）"""
+    return shutil.which("docker") is not None
+
+
+def docker_status():
+    """Docker 状态：{installed, service_active, version, containers, running}"""
+    if not docker_available():
+        return {"installed": False, "service_active": False,
+                "version": "", "containers": 0, "running": 0}
+    version = ""
+    try:
+        r = subprocess.run(["docker", "--version"], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            version = (r.stdout or r.stderr).strip()
+    except Exception:
+        pass
+    service_active = False
+    try:
+        r = subprocess.run(["systemctl", "is-active", "docker"],
+                           capture_output=True, text=True, timeout=10)
+        service_active = (r.returncode == 0 and (r.stdout or "").strip() == "active")
+    except Exception:
+        pass
+    containers = running = 0
+    try:
+        r = subprocess.run(["docker", "ps", "-aq"], capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            containers = len([x for x in r.stdout.splitlines() if x.strip()])
+        r2 = subprocess.run(["docker", "ps", "-q"], capture_output=True, text=True, timeout=15)
+        if r2.returncode == 0:
+            running = len([x for x in r2.stdout.splitlines() if x.strip()])
+    except Exception:
+        pass
+    return {"installed": True, "service_active": service_active,
+            "version": version, "containers": containers, "running": running}
+
+
+def install_docker_pkgs():
+    """一键安装 docker + compose 插件。返回 (ok, msg)"""
+    if DRY_RUN:
+        return True, "DRY_RUN: 跳过安装"
+    mgr = pkg_mgr()
+    if not mgr:
+        return False, "无法识别包管理器，请手动安装 Docker"
+    try:
+        if mgr == "apt":
+            r = subprocess.run(["apt-get", "update"], capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                return False, f"apt-get update 失败: {(r.stderr or r.stdout).strip()[:200]}"
+            r = subprocess.run(["apt-get", "install", "-y", "docker.io", "docker-compose-plugin"],
+                               capture_output=True, text=True, timeout=600)
+        elif mgr == "pacman":
+            r = subprocess.run(["pacman", "-Sy", "--noconfirm", "docker", "docker-compose"],
+                               capture_output=True, text=True, timeout=600)
+        elif mgr == "dnf":
+            r = subprocess.run(["dnf", "install", "-y", "docker", "docker-compose-plugin"],
+                               capture_output=True, text=True, timeout=600)
+        else:
+            return False, f"不支持的包管理器: {mgr}"
+    except subprocess.TimeoutExpired:
+        return False, "安装超时（10 分钟）"
+    if r.returncode != 0:
+        return False, f"安装失败: {(r.stderr or r.stdout).strip()[:300]}"
+    # 启动服务 + 开机自启
+    try:
+        subprocess.run(["systemctl", "enable", "--now", "docker"],
+                       capture_output=True, text=True, timeout=60)
+    except Exception:
+        pass
+    return True, "Docker 已安装并启动"
+
+
+def docker_images():
+    """镜像列表（docker images --format json）"""
+    if not docker_available():
+        return []
+    try:
+        r = subprocess.run(["docker", "images", "--format",
+                            "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}"],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            return []
+        out = []
+        for line in r.stdout.splitlines():
+            p = line.split("\t")
+            if len(p) >= 4:
+                out.append({"id": p[0][:12], "repository": p[1],
+                            "tag": p[2], "size": p[3]})
+        return out
+    except Exception:
+        return []
+
+
+def docker_containers(all_=True):
+    """容器列表（docker ps -a --format json）"""
+    if not docker_available():
+        return []
+    try:
+        args = ["docker", "ps", "--format",
+                "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]
+        if all_:
+            args.insert(2, "-a")
+        r = subprocess.run(args, capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            return []
+        out = []
+        for line in r.stdout.splitlines():
+            p = line.split("\t")
+            if len(p) >= 4:
+                running = p[3].startswith("Up")
+                out.append({"id": p[0][:12], "name": p[1], "image": p[2],
+                            "status": p[3], "ports": p[4] if len(p) > 4 else "",
+                            "running": running})
+        return out
+    except Exception:
+        return []
+
+
+def docker_stats():
+    """资源监控（docker stats --no-stream）"""
+    if not docker_available():
+        return []
+    try:
+        r = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format",
+             "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}"],
+            capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return []
+        out = []
+        for line in r.stdout.splitlines():
+            p = line.split("\t")
+            if len(p) >= 6:
+                out.append({"name": p[0], "cpu": p[1], "mem": p[2],
+                            "mem_pct": p[3], "net": p[4], "block": p[5]})
+        return out
+    except Exception:
+        return []
+
+
+def docker_action(act, cid):
+    """容器操作：start/stop/restart/remove"""
+    if DRY_RUN:
+        return True, f"DRY_RUN: {act} {cid}"
+    try:
+        r = subprocess.run(["docker", act, cid], capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return False, "操作超时"
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip()[:300]
+    return True, f"容器 {act} 成功"
+
+
+def docker_logs(cid, tail=200):
+    """查看容器日志（最后 N 行）"""
+    try:
+        r = subprocess.run(["docker", "logs", "--tail", str(tail), cid],
+                           capture_output=True, text=True, timeout=20)
+        return r.stdout[-8000:] + (r.stderr[-2000:] if r.stderr else "")
+    except Exception:
+        return ""
+
+
+def docker_pull(name):
+    """拉取镜像"""
+    if DRY_RUN:
+        return True, f"DRY_RUN: pull {name}"
+    try:
+        r = subprocess.run(["docker", "pull", name], capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        return False, "拉取超时（10 分钟）"
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip()[:300]
+    return True, f"镜像 {name} 拉取成功"
+
+
+def docker_rmi(image_id):
+    """删除镜像"""
+    if DRY_RUN:
+        return True, f"DRY_RUN: rmi {image_id}"
+    try:
+        r = subprocess.run(["docker", "rmi", "-f", image_id],
+                           capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return False, "删除超时"
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip()[:300]
+    return True, f"镜像 {image_id} 已删除"
+
+
+def docker_create(name, image, ports="", envs=""):
+    """创建容器：name/镜像/端口映射(宿:容,逗号分隔)/环境变量(KEY=V,逗号分隔)"""
+    if DRY_RUN:
+        return True, f"DRY_RUN: create {name} from {image}"
+    args = ["docker", "run", "-d", "--name", name]
+    for kv in [x.strip() for x in ports.split(",") if x.strip()]:
+        args += ["-p", kv]
+    for kv in [x.strip() for x in envs.split(",") if x.strip()]:
+        args += ["-e", kv]
+    args.append(image)
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return False, "创建超时（5 分钟）"
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip()[:300]
+    return True, f"容器 {name} 创建成功"
+
+
+COMPOSE_FILE = os.environ.get("FW_COMPOSE_FILE", "/etc/fwpanel/docker-compose.yml")
+
+
+def docker_compose_up(content):
+    """保存 docker-compose.yml 到 /etc/fwpanel 并启动"""
+    if DRY_RUN:
+        return True, "DRY_RUN: compose up"
+    try:
+        d = os.path.dirname(COMPOSE_FILE)
+        os.makedirs(d, exist_ok=True)
+        with open(COMPOSE_FILE, "w") as f:
+            f.write(content)
+        r = subprocess.run(["docker", "compose", "-f", COMPOSE_FILE,
+                            "up", "-d"],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout).strip()[:400]
+    except Exception as e:
+        return False, f"Compose 启动失败: {e}"
+    return True, "Compose 启动成功"
+
+
+def docker_compose_down():
+    """停止并移除 compose 服务（读取已保存的 yml）"""
+    if DRY_RUN:
+        return True, "DRY_RUN: compose down"
+    if not os.path.exists(COMPOSE_FILE):
+        return False, "尚未保存 docker-compose.yml，请先执行「Compose 启动」"
+    try:
+        r = subprocess.run(["docker", "compose", "-f", COMPOSE_FILE, "down"],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout).strip()[:400]
+    except Exception as e:
+        return False, f"Compose 停止失败: {e}"
+    return True, "Compose 已停止"
+
+
 def nginx_supports_reject_handshake():
     """nginx >= 1.19.4 支持 ssl_reject_handshake（未匹配 SNI 直接拒绝 TLS 握手）"""
     try:
@@ -1501,6 +1751,16 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_bruteforce()
         elif path == "/api/proxy":
             self._api_proxy()
+        elif path == "/api/docker":
+            self._api_docker_status()
+        elif path == "/api/docker/containers":
+            self._api_docker_containers()
+        elif path == "/api/docker/images":
+            self._api_docker_images()
+        elif path == "/api/docker/stats":
+            self._api_docker_stats()
+        elif path.startswith("/api/docker/logs/"):
+            self._api_docker_logs(path[len("/api/docker/logs/"):])
         elif path == "/api/rules":
             self._api_list_rules()
         elif path == "/api/logout":
@@ -1568,6 +1828,20 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_proxy_action(path[len("/api/proxy/"):])
         elif path == "/api/username":
             self._api_username()
+        elif path == "/api/docker/install":
+            self._api_docker_install()
+        elif path == "/api/docker/action":
+            self._api_docker_action()
+        elif path == "/api/docker/create":
+            self._api_docker_create()
+        elif path == "/api/docker/pull":
+            self._api_docker_pull()
+        elif path == "/api/docker/rmi":
+            self._api_docker_rmi()
+        elif path == "/api/docker/compose/up":
+            self._api_docker_compose_up()
+        elif path == "/api/docker/compose/down":
+            self._api_docker_compose_down()
         else:
             self._send(404, {"error": "Not Found"})
 
@@ -1842,6 +2116,131 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         self.server.config.set("username", name)
         self._send(200, {"ok": True, "msg": f"登录用户名已修改为 {name}，下次登录请用新用户名"})
+
+    # ---------- Docker API（v1.24.0）----------
+
+    def _api_docker_status(self):
+        """GET /api/docker → 安装状态/版本/容器数"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, docker_status())
+
+    def _api_docker_containers(self):
+        """GET /api/docker/containers → 容器列表"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, {"containers": docker_containers(True)})
+
+    def _api_docker_images(self):
+        """GET /api/docker/images → 镜像列表"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, {"images": docker_images()})
+
+    def _api_docker_stats(self):
+        """GET /api/docker/stats → 资源监控"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, {"stats": docker_stats()})
+
+    def _api_docker_logs(self, cid):
+        """GET /api/docker/logs/<id> → 容器日志"""
+        token = self._require_auth()
+        if token is None:
+            return
+        self._send(200, {"logs": docker_logs(cid)})
+
+    def _api_docker_install(self):
+        """POST /api/docker/install → 一键安装 docker + compose"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = install_docker_pkgs()
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_action(self):
+        """POST /api/docker/action {action, id} → start/stop/restart/remove"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        act = str(data.get("action", ""))
+        cid = str(data.get("id", "")).strip()
+        if act not in ("start", "stop", "restart", "remove"):
+            self._send(400, {"error": "无效操作，支持: start/stop/restart/remove"})
+            return
+        if not cid:
+            self._send(400, {"error": "缺少容器 ID"})
+            return
+        ok, msg = docker_action(act, cid)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_create(self):
+        """POST /api/docker/create {name, image, ports, envs} → 创建容器"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        name = str(data.get("name", "")).strip()
+        image = str(data.get("image", "")).strip()
+        if not name or not image:
+            self._send(400, {"error": "容器名称和镜像不能为空"})
+            return
+        ok, msg = docker_create(name, image,
+                                str(data.get("ports", "")),
+                                str(data.get("envs", "")))
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_pull(self):
+        """POST /api/docker/pull {name} → 拉取镜像"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        name = str(data.get("name", "")).strip()
+        if not name:
+            self._send(400, {"error": "镜像名不能为空"})
+            return
+        ok, msg = docker_pull(name)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_rmi(self):
+        """POST /api/docker/rmi {id} → 删除镜像"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        image_id = str(data.get("id", "")).strip()
+        if not image_id:
+            self._send(400, {"error": "缺少镜像 ID"})
+            return
+        ok, msg = docker_rmi(image_id)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_compose_up(self):
+        """POST /api/docker/compose/up {content} → 保存并启动 compose"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        content = str(data.get("content", ""))
+        if not content.strip():
+            self._send(400, {"error": "docker-compose.yml 内容不能为空"})
+            return
+        ok, msg = docker_compose_up(content)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_compose_down(self):
+        """POST /api/docker/compose/down → 停止 compose 服务"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = docker_compose_down()
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_bruteforce_ban(self):
         """手动封禁 IP：{ip} → 添加拒绝规则 + 写入封禁记录（使用配置的封禁时长）"""
