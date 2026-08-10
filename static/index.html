@@ -20,10 +20,13 @@ body {
     radial-gradient(700px 500px at 50% 110%, rgba(139,92,246,.08), transparent 60%),
     var(--bg);
   background-attachment: fixed;
-  color: var(--text); font: 14px/1.6 "PingFang SC","Microsoft YaHei",system-ui,sans-serif; overflow-x: hidden;
+  color: var(--text);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC", "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  overflow-x: hidden;
 }
 .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 60px; }
-h1 { font-size: 20px; display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+h1 { font-size: 20px; font-weight: 700; letter-spacing: .5px; display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
 .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
 .topbar { display: flex; justify-content: space-between; align-items: center; }
@@ -96,7 +99,7 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 #add_proxy_row { display: grid; grid-template-columns: 1fr 1fr 90px 100px auto auto auto; gap: 8px; align-items: center; margin-bottom: 8px; }
 #add_proxy_row input, #add_proxy_row select { width: 100%; box-sizing: border-box; }
 @media (max-width: 1080px) { #add_proxy_row { grid-template-columns: 1fr 1fr; } }
-.panel h2 { font-size: 15px; margin-bottom: 12px; }
+.panel h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
 .btn {
   background: linear-gradient(135deg, #4da3ff, #2f6ff0);
   color: #fff; border: 0; border-radius: 7px; padding: 7px 14px; cursor: pointer; font-size: 13px;
