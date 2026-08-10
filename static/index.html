@@ -1562,7 +1562,7 @@ async function loadDocker() {
     const svc = st.service_active ? "服务运行中" : "⚠ 服务未运行";
     const dkv = st.version || "";
     const ckv = st.compose_version ? ` · Compose ${st.compose_version}` : "";
-    $("docker_status").textContent = `Docker 已安装 · ${dkv} · ${svc} · 容器 ${st.running}/${st.containers}${ckv}`;
+    $("docker_status").textContent = `Docker 已安装 · ${dkv}${ckv} · ${svc} · 容器 ${st.running}/${st.containers}`;
     $("docker_status").className = "v " + (st.service_active ? "ok" : "off");
     // 镜像存储目录状态
     const dr = $("dk_dataroot_status");
