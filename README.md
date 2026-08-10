@@ -1,6 +1,6 @@
-# FW-Panel · 自研防火墙控制面板
+# FW-Panel · 简易防火墙控制面板
 
-完全自研的 Linux 防火墙管理面板：**Python 标准库 + nftables**，零第三方 Python 依赖，不依赖 firewalld / ufw / 1Panel 等任何外部面板。
+轻量易用的 Linux 防火墙管理面板：**Python 标准库 + nftables**，零第三方 Python 依赖，不依赖 firewalld / ufw 等外部组件。装完即可通过网页管理端口放行、IP 规则、SSH 保护、反向代理与证书。
 
 ## 支持系统
 
@@ -66,7 +66,7 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 - **IPv6 设置**：IPv4 优先（gai.conf precedence）/ 禁用 IPv6 / 开启 IPv6，sysctl 持久化 + 立即生效
 
 ### 反向代理（Nginx）
-- 域名绑定反代（HTTP/HTTPS、WebSocket 勾选、HTTP→HTTPS 跳转、**HSTS 支持**），列表「功能」列显示启用的 WS / HSTS
+- 域名绑定反代（HTTP/HTTPS、WebSocket 勾选、HTTP→HTTPS 跳转、**HSTS 支持**），列表「功能」列显示启用的 WS / HSTS；**已添加代理可随时编辑**（协议 / WebSocket / HSTS 弹窗修改，立即生效）
 - ACME 证书一键申请 / 手动续期 / 证书路径一键复制；**单独申请 SSL 证书模块**（无需配置反代，独立管理多域名证书），状态行显示 **certbot 自动续期状态 + 下次检测时间**（中文格式）
 - 一键安装 nginx + certbot（自动识别 apt/pacman/dnf），证书申请前自动写入 ACME 挑战路径配置并 reload nginx
 - **禁止公网直连**：
