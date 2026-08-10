@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# fwpanel — 自研防火墙控制面板 一键安装包（Debian/Ubuntu/Arch/Fedora 多发行版）
+# fwpanel — 简易防火墙控制面板 一键安装包（Debian/Ubuntu/Arch/Fedora 多发行版）
 # -----------------------------------------------------------------------------
 # 零第三方依赖：Python 标准库 + 系统 nftables，不装 firewalld/ufw。
 #
@@ -226,7 +226,7 @@ do_check() {
 
 usage() {
     cat <<EOF
-$SCRIPT_NAME v$SCRIPT_VERSION —— 自研防火墙控制面板（Debian 13 · nftables）
+$SCRIPT_NAME v$SCRIPT_VERSION —— 简易防火墙控制面板（Debian 13 · nftables）
 
 用法:
   sudo bash $0                           一键安装（随机端口/用户名/密码，安装结束一并打印）
