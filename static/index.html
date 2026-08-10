@@ -288,8 +288,8 @@ tr:hover td { background: #1d2733; }
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">🗂 存储目录</div>
       <div class="form-row" style="margin-bottom:8px">
-        <span style="color:var(--muted);font-size:12px" id="dk_dirs_status">检测中...</span>
         <button class="btn" onclick="createDockerDirs()">一键创建存储目录</button>
+        <span style="color:var(--muted);font-size:12px" id="dk_dirs_status">检测中...</span>
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:8px">在根目录创建 /DockerData，并自动创建常用子目录（mysql / redis / nginx / postgres / mongo / rabbitmq / elasticsearch / kafka / portainer / gitea / jellyfin / data / backup / logs / compose），已存在的目录不会重复创建</div>
       <div style="font-family:monospace;font-size:12px;background:#0d1218;border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);margin-bottom:12px;word-break:break-all">容器挂载卷：-v /DockerData/&lt;目录名&gt;:&lt;容器路径&gt;</div>
