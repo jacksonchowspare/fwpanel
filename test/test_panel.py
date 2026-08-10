@@ -705,10 +705,61 @@ class TestAPI(unittest.TestCase):
                             {"domain": "app.example.com", "target_host": "1.2.3.4",
                              "target_port": 80}, token=token)
         self.assertEqual(code, 400)
-        # 停用/启用
+        # v1.24.24 联动修复：关闭 blockip 后目标端口拒绝规则应删除（代理启用状态下）
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": True}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
+                and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
+        self.assertTrue(deny, "开启 blockip 时拒绝规则应存在")
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": False}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
+                and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
+        self.assertFalse(deny, "关闭 blockip 后拒绝规则应联动删除")
+        # 停用/启用（停用代理不占用端口：关闭 blockip 时规则删除；启用则保留）
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": True}, token=token)
+        self.assertEqual(code, 200, d)
         code, d = self._req("POST", f"/api/proxy/{pid}", {"action": "enable", "enabled": False}, token=token)
         self.assertEqual(code, 200, d)
-        # 删除
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": False}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
+                and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
+        self.assertFalse(deny, "停用代理关闭 blockip 后规则应删除（停用不算占用）")
+        # 重新启用 + 另一代理同端口：关闭 blockip 时规则保留（另一代理仍占用）
+        code, d = self._req("POST", f"/api/proxy/{pid}", {"action": "enable", "enabled": True}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("POST", "/api/proxy",
+                            {"domain": "other.example.com", "target_host": "127.0.0.1",
+                             "target_port": 8080}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": False}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
+                and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
+        self.assertTrue(deny, "有其他启用代理占用同端口时规则应保留")
+        # 删除另一个代理后，端口无占用，再次关闭 blockip 应删除规则
+        code, d = self._req("GET", "/api/proxy", token=token)
+        other = [q for q in d["proxies"] if q["domain"] == "other.example.com"]
+        self.assertTrue(other)
+        code, d = self._req("DELETE", f"/api/proxy/{other[0]['id']}", token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("POST", f"/api/proxy/{pid}",
+                            {"action": "blockip", "enabled": False}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
+                and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
+        self.assertFalse(deny, "无其他代理占用后关闭 blockip 应删除规则")
         code, d = self._req("DELETE", f"/api/proxy/{pid}", token=token)
         self.assertEqual(code, 200, d)
         code, d = self._req("GET", "/api/proxy", token=token)
