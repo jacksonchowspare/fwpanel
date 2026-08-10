@@ -721,34 +721,15 @@ class TestAPI(unittest.TestCase):
                             {"domain": "app.example.com", "target_host": "1.2.3.4",
                              "target_port": 80}, token=token)
         self.assertEqual(code, 400)
-        # v1.24.26：开启 blockip 时幂等补建目标端口拒绝规则（v1.24.24 误删后自动恢复）
-        # 先手动删除该规则模拟"已被误删"
-        code, d = self._req("GET", "/api/rules", token=token)
-        for r in d["rules"]:
-            if r.get("type") == "port_deny" and r.get("port") == 8080 \
-                    and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT:
-                self._req("DELETE", f"/api/rules/{r['id']}", token=token)
-        code, d = self._req("GET", "/api/rules", token=token)
-        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
-                and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
-        self.assertFalse(deny, "前置：规则已手动删除")
-        # 开启 blockip → 规则自动重建
-        code, d = self._req("POST", f"/api/proxy/{pid}",
-                            {"action": "blockip", "enabled": True}, token=token)
-        self.assertEqual(code, 200, d)
-        self.assertIn("重建", d["msg"])
-        code, d = self._req("GET", "/api/rules", token=token)
-        deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
-                and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
-        self.assertTrue(deny, "开启 blockip 应自动重建目标端口拒绝规则")
-        # 关闭 blockip → 规则保留（保护不撤）
+        # v1.24.28：关闭 blockip 联动删除拒绝规则（用户明确要求总开关心智）
         code, d = self._req("POST", f"/api/proxy/{pid}",
                             {"action": "blockip", "enabled": False}, token=token)
         self.assertEqual(code, 200, d)
+        self.assertIn("删除", d["msg"])
         code, d = self._req("GET", "/api/rules", token=token)
         deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080
                 and r.get("comment") == panel.PROXY_TARGET_DENY_COMMENT]
-        self.assertTrue(deny, "关闭 blockip 后拒绝规则必须保留（防公网直连后端）")
+        self.assertFalse(deny, "关闭 blockip 后拒绝规则应联动删除")
         # 停用/启用
         code, d = self._req("POST", f"/api/proxy/{pid}", {"action": "enable", "enabled": False}, token=token)
         self.assertEqual(code, 200, d)

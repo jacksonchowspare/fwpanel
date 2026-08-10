@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.27"
+CURRENT_VERSION = "1.24.28"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -3222,21 +3222,34 @@ class PanelHandler(BaseHTTPRequestHandler):
             pstore.save()
             ok, msg = apply_proxies(pstore)
             state = "已开启" if p["block_ip"] else "已关闭"
-            # 规则联动（v1.24.26）：
-            # 开启 → 幂等补建目标端口拒绝规则（v1.24.24 曾误删，打开时自动恢复；无变化则不动）
-            # 关闭 → 绝不删除 port_deny（blockip 是 nginx 入口校验，port_deny 是防火墙保护，两层独立）
+            # 规则联动（v1.24.28 用户明确要求"总开关"心智）：
+            # 开启 → 幂等补建目标端口拒绝规则（缺失自动重建）
+            # 关闭 → 删除该端口的拒绝规则（nginx 入口 + 防火墙保护同时放开）
+            # ⚠ 用户已知悉：关闭后目标端口（含 Docker 发布端口）公网直连不再受防火墙保护
             tail = ""
             tport = p.get("target_port")
-            if p["block_ip"] and tport and tport not in (80, 443):
+            if tport and tport not in (80, 443):
                 store = self.server.store
-                if not any(r.get("type") == "port_deny" and r.get("port") == tport
-                           and r.get("comment") == PROXY_TARGET_DENY_COMMENT
-                           for r in store.rules):
-                    store.add({"type": "port_deny", "proto": "tcp", "port": tport,
-                               "comment": PROXY_TARGET_DENY_COMMENT})
-                    store.save()
-                    self.server.nft.apply()
-                    tail = "；已重建目标端口拒绝规则"
+                if p["block_ip"]:
+                    # 开启：补建（幂等）
+                    if not any(r.get("type") == "port_deny" and r.get("port") == tport
+                               and r.get("comment") == PROXY_TARGET_DENY_COMMENT
+                               for r in store.rules):
+                        store.add({"type": "port_deny", "proto": "tcp", "port": tport,
+                                   "comment": PROXY_TARGET_DENY_COMMENT})
+                        store.save()
+                        self.server.nft.apply()
+                        tail = "；已重建目标端口拒绝规则"
+                else:
+                    # 关闭：删除（联动）
+                    before = len(store.rules)
+                    store.rules = [r for r in store.rules
+                                   if not (r.get("type") == "port_deny" and r.get("port") == tport
+                                           and r.get("comment") == PROXY_TARGET_DENY_COMMENT)]
+                    if len(store.rules) != before:
+                        store.save()
+                        self.server.nft.apply()
+                        tail = "；已删除目标端口拒绝规则"
             self._send(200, {"ok": True, "msg": f"{p['domain']} 禁止 IP+端口访问{state}（{msg}）{tail}"})
         elif action == "edit":
             if "scheme" in data:
