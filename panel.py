@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.24"
+CURRENT_VERSION = "1.24.25"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -3205,24 +3205,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             pstore.save()
             ok, msg = apply_proxies(pstore)
             state = "已开启" if p["block_ip"] else "已关闭"
-            # 关闭时联动清理该目标端口的「禁止公网直连」拒绝规则（若无其他代理仍占用该端口）
-            # v1.24.24 修复：开启时自动加的 port_deny 规则，关闭后残留，需联动删除
-            tail = ""
-            if not p["block_ip"]:
-                tport = p.get("target_port")
-                if tport and tport not in (80, 443):
-                    store = self.server.store
-                    # 联动删除（用户要求 v1.24.24）：关闭 blockip 后若无「其他启用」代理占用该端口，
-                    # 删除对应的公网直连拒绝规则；自身不算（已关闭）、停用代理不算（未在服务）
-                    if not any(q.get("target_port") == tport and q.get("enabled", True)
-                               and q.get("id") != pid for q in pstore.proxies):
-                        store.rules = [r for r in store.rules
-                                       if not (r.get("type") == "port_deny" and r.get("port") == tport
-                                               and r.get("comment") == PROXY_TARGET_DENY_COMMENT)]
-                        store.save()
-                        self.server.nft.apply()
-                        tail = "；已联动删除该端口拒绝规则"
-            self._send(200, {"ok": True, "msg": f"{p['domain']} 禁止 IP+端口访问{state}（{msg}）{tail}"})
+            # ⚠ v1.24.25 回滚：blockip 与 port_deny 是两层独立保护——
+            # blockip 只控制 nginx 入口（域名校验），port_deny 保护目标端口不被公网直连（防绕过 nginx）。
+            # 关闭 blockip 绝不删除 port_deny（v1.24.24 误删导致公网直连后端服务的安全漏洞）。
+            self._send(200, {"ok": True, "msg": f"{p['domain']} 禁止 IP+端口访问{state}（{msg}）"})
         elif action == "edit":
             if "scheme" in data:
                 sc = str(data.get("scheme"))

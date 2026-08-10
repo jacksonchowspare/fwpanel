@@ -1026,7 +1026,7 @@ function legacyCopy(text) {
 async function toggleBlockIp(id, on) {
   const msg = on
     ? "确认开启禁止 IP+端口访问？\n\n未匹配该域名的请求（如公网 IP 直连 80/443）将无法访问 nginx 入口。\n目标端口已自动禁止公网直连（规则列表可见）。\n注意：请同时确认云安全组未放行目标端口。"
-    : "确认关闭禁止 IP+端口访问？\n\n关闭后公网 IP+端口直连将可访问该反代入口。\n如无其他代理占用该目标端口，对应的拒绝规则将自动删除。";
+    : "确认关闭禁止 IP+端口访问？\n\n关闭后公网 IP+端口直连将可访问该反代入口（nginx 域名校验放开）。\n目标端口仍保持禁止公网直连（防火墙规则不变，防绕过 nginx）。";
   confirmPanel(msg, () => {
     api("POST", "/api/proxy/" + id, { action: "blockip", enabled: on }).then(d => {
       toast(d.msg || "已更新", "okk"); loadProxy();
