@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.26"
+CURRENT_VERSION = "1.24.27"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -275,6 +275,23 @@ class RuleStore:
                 for line in self._render_one(r):
                     lines.append(line)
         lines.append("    }")
+        # ⚠ v1.24.27：PREROUTING 拦截链（priority -200，在 Docker DNAT 之前）——
+        #   Docker 端口映射（-p 8807:8080）的流量在 PREROUTING 被 DNAT 后走 FORWARD 链进容器，
+        #   永远不会经过 input 链，input 链的 port_deny drop 对 Docker 端口完全无效。
+        #   这里用 filter hook prerouting priority -200（早于 Docker 的 dstnat -100），
+        #   公网直连目标端口在 DNAT 前直接 drop；iifname != "lo" 保证 nginx 本机反代不受影响。
+        deny_ports = [r for r in self.rules if r.get("type") == "port_deny"]
+        if deny_ports:
+            lines.append("    chain prerouting_drop {")
+            lines.append("        type filter hook prerouting priority -200; policy accept;")
+            for r in deny_ports:
+                if r.get("proto") == "both":
+                    lines.append(f'        iifname != "lo" tcp dport {r["port"]} drop   # 禁止公网直连(Docker端口)')
+                    lines.append(f'        iifname != "lo" udp dport {r["port"]} drop   # 禁止公网直连(Docker端口)')
+                else:
+                    proto = r.get("proto", "tcp")
+                    lines.append(f'        iifname != "lo" {proto} dport {r["port"]} drop   # 禁止公网直连(Docker端口)')
+            lines.append("    }")
         lines.append("}")
         return "\n".join(lines) + "\n"
 

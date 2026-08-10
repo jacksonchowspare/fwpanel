@@ -93,6 +93,22 @@ class TestRules(unittest.TestCase):
         # 顺序：SSH 保护必须在用户规则之前
         self.assertLess(text.index("SSH 保护"), text.index("tcp dport 80"))
 
+    def test_render_prerouting_docker_port(self):
+        """port_deny 规则必须生成 PREROUTING 拦截链（priority -200，Docker DNAT 之前）"""
+        store = panel.RuleStore()
+        store.rules = [
+            {"id": "1", "type": "port_deny", "proto": "tcp", "port": 8807, "comment": ""},
+            {"id": "2", "type": "port_allow", "proto": "tcp", "port": 443, "comment": ""},
+        ]
+        text = store.render(self.cfg)
+        self.assertIn("chain prerouting_drop", text)
+        self.assertIn("type filter hook prerouting priority -200", text)
+        self.assertIn('iifname != "lo" tcp dport 8807 drop', text)
+        # 无 port_deny 时不生成
+        store.rules = [{"id": "2", "type": "port_allow", "proto": "tcp", "port": 443, "comment": ""}]
+        text2 = store.render(self.cfg)
+        self.assertNotIn("prerouting_drop", text2)
+
     def test_render_strict(self):
         strict_cfg = make_cfg(mode="strict")
         text = self.store.render(strict_cfg)
