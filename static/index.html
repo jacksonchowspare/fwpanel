@@ -966,7 +966,7 @@ async function addProxy() {
     });
     toast(d.msg || "代理已添加", "okk");
     $("px_domain").value = ""; $("px_host").value = ""; $("px_port").value = "";
-    loadProxy();
+    loadProxy(); renderRules();
   } catch (e) { toast(e.message, "err"); }
 }
 async function toggleProxy(id, on) {
@@ -975,7 +975,7 @@ async function toggleProxy(id, on) {
 }
 async function delProxy(id) {
   confirmPanel("确认删除该代理？\n\n将移除对应 nginx 配置并收回自动放行的端口。", () => {
-    api("DELETE", "/api/proxy/" + id).then(d => { toast(d.msg || "已删除", "okk"); loadProxy(); })
+    api("DELETE", "/api/proxy/" + id).then(d => { toast(d.msg || "已删除", "okk"); loadProxy(); renderRules(); })
       .catch(e => toast(e.message, "err"));
   }, "🗑 删除代理");
 }
@@ -1029,7 +1029,7 @@ async function toggleBlockIp(id, on) {
     : "确认关闭禁止 IP+端口访问？\n\n关闭后：nginx 入口校验放开，且目标端口的防火墙拒绝规则将被删除（公网直连该端口不再受保护）。\n⚠ 若该端口是 Docker 发布端口，公网将可直连容器！";
   confirmPanel(msg, () => {
     api("POST", "/api/proxy/" + id, { action: "blockip", enabled: on }).then(d => {
-      toast(d.msg || "已更新", "okk"); loadProxy();
+      toast(d.msg || "已更新", "okk"); loadProxy(); renderRules();
     }).catch(e => toast(e.message, "err"));
   }, on ? "🚫 禁止 IP 访问" : "🌐 允许 IP 访问");
 }
