@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.25"
+CURRENT_VERSION = "1.24.26"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -3205,10 +3205,22 @@ class PanelHandler(BaseHTTPRequestHandler):
             pstore.save()
             ok, msg = apply_proxies(pstore)
             state = "已开启" if p["block_ip"] else "已关闭"
-            # ⚠ v1.24.25 回滚：blockip 与 port_deny 是两层独立保护——
-            # blockip 只控制 nginx 入口（域名校验），port_deny 保护目标端口不被公网直连（防绕过 nginx）。
-            # 关闭 blockip 绝不删除 port_deny（v1.24.24 误删导致公网直连后端服务的安全漏洞）。
-            self._send(200, {"ok": True, "msg": f"{p['domain']} 禁止 IP+端口访问{state}（{msg}）"})
+            # 规则联动（v1.24.26）：
+            # 开启 → 幂等补建目标端口拒绝规则（v1.24.24 曾误删，打开时自动恢复；无变化则不动）
+            # 关闭 → 绝不删除 port_deny（blockip 是 nginx 入口校验，port_deny 是防火墙保护，两层独立）
+            tail = ""
+            tport = p.get("target_port")
+            if p["block_ip"] and tport and tport not in (80, 443):
+                store = self.server.store
+                if not any(r.get("type") == "port_deny" and r.get("port") == tport
+                           and r.get("comment") == PROXY_TARGET_DENY_COMMENT
+                           for r in store.rules):
+                    store.add({"type": "port_deny", "proto": "tcp", "port": tport,
+                               "comment": PROXY_TARGET_DENY_COMMENT})
+                    store.save()
+                    self.server.nft.apply()
+                    tail = "；已重建目标端口拒绝规则"
+            self._send(200, {"ok": True, "msg": f"{p['domain']} 禁止 IP+端口访问{state}（{msg}）{tail}"})
         elif action == "edit":
             if "scheme" in data:
                 sc = str(data.get("scheme"))
