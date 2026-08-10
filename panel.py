@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.12"
+CURRENT_VERSION = "1.24.13"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1213,7 +1213,8 @@ def docker_status():
     """Docker 状态：{installed, service_active, version, containers, running, data_root}"""
     if not docker_available():
         return {"installed": False, "service_active": False,
-                "version": "", "containers": 0, "running": 0, "data_root": ""}
+                "version": "", "containers": 0, "running": 0,
+                "data_root": "", "compose_version": ""}
     version = ""
     try:
         r = subprocess.run(["docker", "--version"], capture_output=True, text=True, timeout=10)
@@ -1247,9 +1248,22 @@ def docker_status():
             data_root = ri.stdout.strip()
     except Exception:
         pass
+    # compose 版本（docker compose version，提取 vX.Y.Z）
+    compose_version = ""
+    try:
+        rc = subprocess.run(["docker", "compose", "version"],
+                            capture_output=True, text=True, timeout=10)
+        if rc.returncode == 0:
+            compose_version = rc.stdout.strip()
+            # 精简：只保留版本号部分（如 Docker Compose version v2.29.7 → v2.29.7）
+            m = re.search(r"v?\d+\.\d+\.\d+", compose_version)
+            if m:
+                compose_version = m.group(0)
+    except Exception:
+        pass
     return {"installed": True, "service_active": service_active,
             "version": version, "containers": containers, "running": running,
-            "data_root": data_root}
+            "data_root": data_root, "compose_version": compose_version}
 
 
 def install_docker_pkgs(source="official"):

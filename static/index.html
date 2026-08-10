@@ -1560,7 +1560,9 @@ async function loadDocker() {
     $("docker_install_area").style.display = "none";
     $("btn_dk_uninstall").style.display = "";
     const svc = st.service_active ? "服务运行中" : "⚠ 服务未运行";
-    $("docker_status").textContent = `Docker 已安装 · ${st.version || ""} · ${svc} · 容器 ${st.running}/${st.containers}`;
+    const dkv = st.version || "";
+    const ckv = st.compose_version ? ` · Compose ${st.compose_version}` : "";
+    $("docker_status").textContent = `Docker 已安装 · ${dkv} · ${svc} · 容器 ${st.running}/${st.containers}${ckv}`;
     $("docker_status").className = "v " + (st.service_active ? "ok" : "off");
     // 镜像存储目录状态
     const dr = $("dk_dataroot_status");
