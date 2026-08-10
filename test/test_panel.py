@@ -1747,8 +1747,14 @@ class TestDocker(unittest.TestCase):
             req.add_header("Content-Type", "application/json")
         try:
             with urllib.request.urlopen(req, body) as resp:
-                return resp.status, json.loads(resp.read())
+                self._last_content_type = resp.headers.get("Content-Type", "")
+                raw = resp.read()
+                try:
+                    return resp.status, json.loads(raw)
+                except Exception:
+                    return resp.status, raw
         except urllib.error.HTTPError as e:
+            self._last_content_type = e.headers.get("Content-Type", "") if e.headers else ""
             try:
                 return e.code, json.loads(e.read())
             except Exception:
@@ -2437,6 +2443,32 @@ class TestDocker(unittest.TestCase):
             panel.subprocess.run = real_run
             panel.COMPOSE_BASE = real_base
             panel.DRY_RUN = real_dry
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_font_static_route(self):
+        """字体文件必须能通过 /static/fonts/ 访问（MIME font/woff2）"""
+        import types
+        real_run = panel.subprocess.run
+        real_dir = panel.STATIC_DIR
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-font-route-")
+            fonts_dir = os.path.join(tmp, "fonts")
+            os.makedirs(fonts_dir, exist_ok=True)
+            font_file = os.path.join(fonts_dir, "fw-sans-sc-regular.woff2")
+            with open(font_file, "wb") as f:
+                f.write(b"wOF2testdata")
+            panel.STATIC_DIR = tmp
+            panel.subprocess.run = lambda args, **kw: types.SimpleNamespace(
+                returncode=0, stdout="", stderr="")
+            tok = self._token()
+            code, body = self._req("GET", "/static/fonts/fw-sans-sc-regular.woff2", token=tok)
+            self.assertEqual(code, 200)
+            self.assertEqual(body, b"wOF2testdata")
+            # 校验响应头 MIME
+            self.assertIn("font/woff2", self._last_content_type)
+        finally:
+            panel.subprocess.run = real_run
+            panel.STATIC_DIR = real_dir
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_docker_logs(self):

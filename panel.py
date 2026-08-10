@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.22"
+CURRENT_VERSION = "1.24.23"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -2186,6 +2186,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._serve_static("index.html")
         elif path == "/favicon.ico":
             self._serve_static("favicon.ico")
+        elif path.startswith("/static/fonts/"):
+            self._serve_static(path[len("/static/"):])
         elif path == "/api/bbr":
             self._api_bbr()
         elif path == "/api/ipv6":
@@ -2345,6 +2347,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             ctype = "image/png"
         elif name.endswith(".ico"):
             ctype = "image/x-icon"
+        elif name.endswith(".woff2"):
+            ctype = "font/woff2"
         else:
             ctype = "application/octet-stream"
         self._send(200, data, ctype)
