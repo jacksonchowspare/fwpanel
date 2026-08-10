@@ -1811,6 +1811,45 @@ class TestDocker(unittest.TestCase):
             for name, fn in saved.items():
                 setattr(panel, name, fn)
 
+    def test_docker_install_official(self):
+        tok = self._token()
+        saved = self._patch_docker(install_docker_pkgs=lambda source="official": (True, "ok"))
+        try:
+            code, d = self._req("POST", "/api/docker/install",
+                                {"source": "official"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_install_china(self):
+        tok = self._token()
+        saved = self._patch_docker(install_docker_pkgs=lambda source="official": (True, "ok"))
+        try:
+            code, d = self._req("POST", "/api/docker/install",
+                                {"source": "china"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_install_invalid_source_defaults(self):
+        """非法 source 应回退 official（不报错）"""
+        tok = self._token()
+        calls = []
+        saved = self._patch_docker(
+            install_docker_pkgs=lambda source="official": calls.append(source) or (True, "ok"))
+        try:
+            code, d = self._req("POST", "/api/docker/install",
+                                {"source": "hack"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
     def test_docker_action_valid(self):
         tok = self._token()
         saved = self._patch_docker(docker_action=lambda act, cid: (True, "ok"))

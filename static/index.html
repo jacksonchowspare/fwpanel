@@ -240,9 +240,11 @@ tr:hover td { background: #1d2733; }
       <div id="docker_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
       <div id="docker_install_area" style="display:none;margin-bottom:10px">
         <div class="form-row">
-          <span style="color:var(--muted);font-size:12px">Docker 未安装，点击安装（自动识别 apt / pacman / dnf，含 docker compose 插件）：</span>
-          <button class="btn" onclick="installDocker()">一键安装 Docker</button>
+          <span style="color:var(--muted);font-size:12px">Docker 未安装，选择安装方式（自动识别 apt / pacman / dnf）：</span>
+          <button class="btn" onclick="installDocker('official')">🌐 国外直连安装</button>
+          <button class="btn" onclick="installDocker('china')">🇨🇳 国内镜像安装</button>
         </div>
+        <div style="color:var(--muted);font-size:12px;margin-top:6px">国内镜像安装：Debian/Ubuntu 使用阿里云 docker-ce 源（docker-ce 全家桶），适合国内服务器官方源连接慢的场景</div>
       </div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📦 容器列表</div>
@@ -1695,16 +1697,17 @@ function renderDockerStats() {
     </tr>`).join("");
 }
 
-function installDocker() {
-  confirmPanel("确定一键安装 Docker？\n\n将自动安装 docker + compose 插件并启动服务（需几分钟）。", async () => {
+function installDocker(source) {
+  const label = source === "china" ? "国内镜像" : "国外直连";
+  confirmPanel(`确定一键安装 Docker（${label}）？\n\n${source === "china" ? "将配置阿里云 docker-ce 镜像源并安装 docker-ce 全家桶" : "将使用发行版官方源安装 Docker"}，安装后自动启动服务（需几分钟）。`, async () => {
     const btn = event.target;
     btn.disabled = true; btn.textContent = "安装中...（几分钟）";
     try {
-      const d = await api("POST", "/api/docker/install", {});
+      const d = await api("POST", "/api/docker/install", { source });
       toast(d.msg || "安装完成", d.ok ? "okk" : "err");
       loadDocker();
     } catch (e) { toast(e.message, "err"); }
-    btn.disabled = false; btn.textContent = "一键安装 Docker";
+    btn.disabled = false; btn.textContent = label === "国内镜像" ? "🇨🇳 国内镜像安装" : "🌐 国外直连安装";
   }, "安装 Docker");
 }
 

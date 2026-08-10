@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.0"
+CURRENT_VERSION = "1.24.1"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1242,26 +1242,46 @@ def docker_status():
             "version": version, "containers": containers, "running": running}
 
 
-def install_docker_pkgs():
-    """一键安装 docker + compose 插件。返回 (ok, msg)"""
+def install_docker_pkgs(source="official"):
+    """一键安装 docker + compose 插件。
+    source="official"：发行版官方源（docker.io / docker）
+    source="china"：国内镜像源（Debian/Ubuntu 用阿里云 docker-ce 源装 docker-ce 全家桶；
+                     Arch 走 pacman 官方源；Fedora/CentOS 用阿里云 docker-ce 源）
+    返回 (ok, msg)"""
     if DRY_RUN:
-        return True, "DRY_RUN: 跳过安装"
+        return True, f"DRY_RUN: 跳过安装（source={source}）"
     mgr = pkg_mgr()
     if not mgr:
         return False, "无法识别包管理器，请手动安装 Docker"
     try:
         if mgr == "apt":
-            r = subprocess.run(["apt-get", "update"], capture_output=True, text=True, timeout=300)
-            if r.returncode != 0:
-                return False, f"apt-get update 失败: {(r.stderr or r.stdout).strip()[:200]}"
-            r = subprocess.run(["apt-get", "install", "-y", "docker.io", "docker-compose-plugin"],
-                               capture_output=True, text=True, timeout=600)
+            if source == "china":
+                ok, msg = _setup_aliyun_docker_apt()
+                if not ok:
+                    return False, msg
+                r = subprocess.run(["apt-get", "install", "-y",
+                                    "docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"],
+                                   capture_output=True, text=True, timeout=600)
+            else:
+                r = subprocess.run(["apt-get", "update"], capture_output=True, text=True, timeout=300)
+                if r.returncode != 0:
+                    return False, f"apt-get update 失败: {(r.stderr or r.stdout).strip()[:200]}"
+                r = subprocess.run(["apt-get", "install", "-y", "docker.io", "docker-compose-plugin"],
+                                   capture_output=True, text=True, timeout=600)
         elif mgr == "pacman":
             r = subprocess.run(["pacman", "-Sy", "--noconfirm", "docker", "docker-compose"],
                                capture_output=True, text=True, timeout=600)
         elif mgr == "dnf":
-            r = subprocess.run(["dnf", "install", "-y", "docker", "docker-compose-plugin"],
-                               capture_output=True, text=True, timeout=600)
+            if source == "china":
+                ok, msg = _setup_aliyun_docker_dnf()
+                if not ok:
+                    return False, msg
+                r = subprocess.run(["dnf", "install", "-y", "docker-ce", "docker-ce-cli",
+                                    "containerd.io", "docker-compose-plugin"],
+                                   capture_output=True, text=True, timeout=600)
+            else:
+                r = subprocess.run(["dnf", "install", "-y", "docker", "docker-compose-plugin"],
+                                   capture_output=True, text=True, timeout=600)
         else:
             return False, f"不支持的包管理器: {mgr}"
     except subprocess.TimeoutExpired:
@@ -1274,7 +1294,97 @@ def install_docker_pkgs():
                        capture_output=True, text=True, timeout=60)
     except Exception:
         pass
-    return True, "Docker 已安装并启动"
+    return True, "Docker 已安装并启动（国内镜像源）" if source == "china" else "Docker 已安装并启动"
+
+
+def _setup_aliyun_docker_apt():
+    """Debian/Ubuntu 配置阿里云 docker-ce 源（自动检测 codename + 架构 + gpg key）"""
+    import urllib.request
+    # 检测 codename（bookworm / trixie / noble ...）和架构
+    codename = ""
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("VERSION_CODENAME="):
+                    codename = line.strip().split("=", 1)[1].strip('"')
+                    break
+    except Exception:
+        pass
+    if not codename:
+        return False, "无法检测系统 codename，请使用国外直连安装"
+    arch = "amd64"
+    try:
+        r = subprocess.run(["dpkg", "--print-architecture"], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            arch = r.stdout.strip()
+    except Exception:
+        pass
+    if arch not in ("amd64", "arm64", "armhf", "ppc64el", "riscv64", "s390x"):
+        return False, f"不支持的架构: {arch}"
+    # 安装 gpg + 配置阿里云 docker-ce 源（apt-key 已废弃，用 keyrings + signed-by）
+    try:
+        os.makedirs("/etc/apt/keyrings", exist_ok=True)
+        gpg_url = "https://mirrors.aliyun.com/docker-ce/linux/debian/gpg"
+        key_path = "/etc/apt/keyrings/docker.gpg"
+        r = subprocess.run(["curl", "-fsSL", gpg_url, "-o", key_path],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return False, f"下载阿里云 gpg key 失败: {(r.stderr or r.stdout).strip()[:200]}"
+        # 区分 Debian / Ubuntu 的源路径
+        dist = "debian"
+        try:
+            with open("/etc/os-release") as f:
+                for line in f:
+                    if line.startswith("ID="):
+                        if line.strip().split("=", 1)[1].strip('"') == "ubuntu":
+                            dist = "ubuntu"
+                        break
+        except Exception:
+            pass
+        repo_line = (f"deb [arch={arch} signed-by={key_path}] "
+                     f"https://mirrors.aliyun.com/docker-ce/linux/{dist} {codename} stable")
+        with open("/etc/apt/sources.list.d/docker-ce.list", "w") as f:
+            f.write(repo_line + "\n")
+        r = subprocess.run(["apt-get", "update"], capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            return False, f"apt-get update 失败: {(r.stderr or r.stdout).strip()[:300]}"
+    except Exception as e:
+        return False, f"配置阿里云源失败: {e}"
+    return True, ""
+
+
+def _setup_aliyun_docker_dnf():
+    """Fedora/CentOS/RHEL 配置阿里云 docker-ce 源（dnf config-manager）"""
+    # 检测大版本
+    ver = "9"
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("VERSION_ID="):
+                    v = line.strip().split("=", 1)[1].strip('"')
+                    ver = v.split(".")[0] if v else "9"
+                    break
+    except Exception:
+        pass
+    if ver not in ("7", "8", "9", "10"):
+        return False, f"不支持的 CentOS/RHEL 版本: {ver}"
+    try:
+        r = subprocess.run(["dnf", "config-manager", "--add-repo",
+                            f"https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo"],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return False, f"添加阿里云 docker-ce 源失败: {(r.stderr or r.stdout).strip()[:300]}"
+        # 阿里云 repo 文件里的官方地址替换成镜像
+        repo = "/etc/yum.repos.d/docker-ce.repo"
+        if os.path.exists(repo):
+            with open(repo) as f:
+                content = f.read()
+            content = content.replace("https://download.docker.com", "https://mirrors.aliyun.com/docker-ce")
+            with open(repo, "w") as f:
+                f.write(content)
+    except Exception as e:
+        return False, f"配置阿里云源失败: {e}"
+    return True, ""
 
 
 def docker_images():
@@ -2155,11 +2265,15 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200, {"logs": docker_logs(cid)})
 
     def _api_docker_install(self):
-        """POST /api/docker/install → 一键安装 docker + compose"""
+        """POST /api/docker/install {source: official|china} → 一键安装 docker + compose"""
         token = self._require_auth()
         if token is None:
             return
-        ok, msg = install_docker_pkgs()
+        data = self._read_json()
+        source = str(data.get("source", "official"))
+        if source not in ("official", "china"):
+            source = "official"
+        ok, msg = install_docker_pkgs(source)
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_action(self):
