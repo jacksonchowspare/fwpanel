@@ -1761,15 +1761,18 @@ function renderComposeList(projects) {
     el.innerHTML = '<div style="color:var(--muted);font-size:12px">暂无已保存项目（Compose 启动后自动出现在这里）</div>';
     return;
   }
-  el.innerHTML = projects.map(p => `
+  el.innerHTML = projects.map(p => {
+    // 状态互斥：运行中只能停止；已停止才能启动/升级（防误点）
+    const canAct = !p.running;
+    return `
     <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border)">
       <span class="v ${p.running ? "ok" : "off"}" style="flex:0 0 auto">${p.running ? "▶ 运行中" : "⏸ 已停止"}</span>
       <span style="flex:1;min-width:0;word-break:break-all">${p.folder}</span>
       <span style="color:var(--muted);font-size:12px;flex:0 0 auto">${fmtComposeTime(p.mtime)}</span>
-      <button class="btn mini ${p.running ? "ghost" : ""}" onclick="composeStart('${p.folder}')">启动</button>
-      <button class="btn mini ghost" onclick="composeUpgrade('${p.folder}')">升级</button>
-      <button class="btn mini danger" onclick="composeDown('${p.folder}')">停止</button>
-    </div>`).join("");
+      <button class="btn mini" onclick="composeStart('${p.folder}')" ${canAct ? "" : "disabled"}>启动</button>
+      <button class="btn mini ghost" onclick="composeUpgrade('${p.folder}')" ${canAct ? "" : "disabled"}>升级</button>
+      <button class="btn mini danger" onclick="composeDown('${p.folder}')" ${p.running ? "" : "disabled"}>停止</button>
+    </div>`}).join("");
 }
 
 function fmtComposeTime(ts) {
