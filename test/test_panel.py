@@ -2167,6 +2167,45 @@ class TestDocker(unittest.TestCase):
             os.makedirs = real_makedirs
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_docker_images_in_use_real_parse(self):
+        """真实解析逻辑：inspect 返回 sha256:64位完整ID 时必须匹配上 images 的 12 位短 ID
+        （v1.24.12 修复：不带 sha256: 前缀截断会全部误判未使用）"""
+        import types
+        real_run = panel.subprocess.run
+        real_avail = panel.docker_available
+        try:
+            panel.docker_available = lambda: True
+
+            def fake_run(args, **kw):
+                if args[0] == "docker" and args[1] == "images":
+                    # 12 位短 ID
+                    return types.SimpleNamespace(
+                        returncode=0,
+                        stdout="6f6e3a1f3e6d\tnginx\tlatest\t100MB\n"
+                               "9d4c2b8a7f11\tbusybox\tlatest\t5MB\n",
+                        stderr="")
+                if args[0] == "docker" and args[1] == "ps":
+                    # ps -aq：容器 ID
+                    return types.SimpleNamespace(returncode=0, stdout="c1c2c3c4\n", stderr="")
+                if args[0] == "docker" and args[1] == "inspect":
+                    # inspect 返回 sha256:64位完整 ID（前 12 位对应 nginx 的 6f6e3a1f3e6d）
+                    return types.SimpleNamespace(
+                        returncode=0,
+                        stdout="sha256:6f6e3a1f3e6d4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c\n",
+                        stderr="")
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            panel.subprocess.run = fake_run
+            imgs = panel.docker_images()
+            self.assertEqual(len(imgs), 2)
+            nginx = [i for i in imgs if i["repository"] == "nginx"][0]
+            busybox = [i for i in imgs if i["repository"] == "busybox"][0]
+            self.assertTrue(nginx["in_use"], "nginx 被容器引用应标记使用中（sha256 前缀 bug）")
+            self.assertFalse(busybox["in_use"], "busybox 未被引用应标记未使用")
+        finally:
+            panel.subprocess.run = real_run
+            panel.docker_available = real_avail
+
     def test_docker_images_in_use_flag(self):
         """docker_images 必须带 in_use 标记（使用中的镜像删除按钮禁用）"""
         tok = self._token()
