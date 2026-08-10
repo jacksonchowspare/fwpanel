@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.5"
+CURRENT_VERSION = "1.24.6"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1306,6 +1306,62 @@ def install_docker_pkgs(source="official"):
     return True, "Docker 已安装并启动（国内镜像源）" if source == "china" else "Docker 已安装并启动"
 
 
+def uninstall_docker_pkgs():
+    """一键卸载 Docker：停止并禁用服务，移除两种来源安装的全部 docker 相关包
+    （国内 docker-ce 系列 + 国外 docker.io/docker 系列 + compose），保留 /DockerData 数据目录。
+    返回 (ok, msg)"""
+    if DRY_RUN:
+        return True, "DRY_RUN: 跳过卸载"
+    mgr = pkg_mgr()
+    if not mgr:
+        return False, "无法识别包管理器，请手动卸载 Docker"
+    # 1. 停止并禁用服务（两种常见服务名都试）
+    for svc in ("docker", "docker.socket"):
+        try:
+            subprocess.run(["systemctl", "stop", svc], capture_output=True, text=True, timeout=60)
+            subprocess.run(["systemctl", "disable", svc], capture_output=True, text=True, timeout=60)
+        except Exception:
+            pass
+    # 2. 移除包（一次性覆盖国内 + 国外两种来源的包名）
+    try:
+        if mgr == "apt":
+            pkgs = ["docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin",
+                    "docker.io", "docker-compose-v2", "docker-compose",
+                    "docker-buildx-plugin", "docker-ce-rootless-extras"]
+            r = subprocess.run(["apt-get", "remove", "-y", "--purge"] + pkgs,
+                               capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                return False, f"apt-get remove 失败: {(r.stderr or r.stdout).strip()[:300]}"
+            r = subprocess.run(["apt-get", "autoremove", "-y", "--purge"],
+                               capture_output=True, text=True, timeout=300)
+        elif mgr == "pacman":
+            r = subprocess.run(["pacman", "-Rns", "--noconfirm",
+                                "docker", "docker-compose", "docker-compose-plugin",
+                                "containerd", "docker-buildx"],
+                               capture_output=True, text=True, timeout=300)
+            # pacman -Rns 对不存在的包会失败，尝试移除已装的部分
+            if r.returncode != 0:
+                r2 = subprocess.run(["pacman", "-Rns", "--noconfirm", "docker", "docker-compose"],
+                                    capture_output=True, text=True, timeout=300)
+                if r2.returncode == 0:
+                    r = r2
+        elif mgr == "dnf":
+            pkgs = ["docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin",
+                    "docker", "docker-compose-v2", "docker-compose",
+                    "docker-buildx-plugin", "docker-ce-rootless-extras"]
+            r = subprocess.run(["dnf", "remove", "-y"] + pkgs,
+                               capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                return False, f"dnf remove 失败: {(r.stderr or r.stdout).strip()[:300]}"
+        else:
+            return False, f"不支持的包管理器: {mgr}"
+    except subprocess.TimeoutExpired:
+        return False, "卸载超时（5 分钟）"
+    if r.returncode != 0:
+        return False, f"卸载失败: {(r.stderr or r.stdout).strip()[:300]}"
+    return True, "Docker 已卸载（/DockerData 数据目录已保留）"
+
+
 def _setup_aliyun_docker_apt():
     """Debian/Ubuntu 配置阿里云 docker-ce 源（自动检测 codename + 架构 + gpg key）"""
     import urllib.request
@@ -1979,6 +2035,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_username()
         elif path == "/api/docker/install":
             self._api_docker_install()
+        elif path == "/api/docker/uninstall":
+            self._api_docker_uninstall()
         elif path == "/api/docker/action":
             self._api_docker_action()
         elif path == "/api/docker/create":
@@ -2315,6 +2373,14 @@ class PanelHandler(BaseHTTPRequestHandler):
         if source not in ("official", "china"):
             source = "official"
         ok, msg = install_docker_pkgs(source)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_uninstall(self):
+        """POST /api/docker/uninstall → 一键卸载 docker（国内/国外源安装均可）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = uninstall_docker_pkgs()
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_action(self):

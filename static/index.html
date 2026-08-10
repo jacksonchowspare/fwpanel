@@ -237,7 +237,10 @@ tr:hover td { background: #1d2733; }
 
     <div class="panel">
       <h2>🐳 Docker 容器管理</h2>
-      <div id="docker_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
+      <div class="form-row" style="margin-bottom:10px">
+        <div id="docker_status" style="color:var(--muted);font-size:12px;flex:1">检测中...</div>
+        <button class="btn danger" onclick="uninstallDocker()" id="btn_dk_uninstall" style="display:none">🗑 一键卸载 Docker</button>
+      </div>
       <div id="docker_install_area" style="display:none;margin-bottom:10px">
         <div class="form-row">
           <span style="color:var(--muted);font-size:12px">Docker 未安装，选择安装方式（自动识别 apt / pacman / dnf）：</span>
@@ -1539,10 +1542,12 @@ async function loadDocker() {
       $("docker_status").textContent = "Docker 未安装";
       $("docker_status").className = "v off";
       $("docker_install_area").style.display = "";
+      $("btn_dk_uninstall").style.display = "none";
       $("dk_rows").innerHTML = '<tr><td colspan="5" style="color:var(--muted)">请先安装 Docker</td></tr>';
       return;
     }
     $("docker_install_area").style.display = "none";
+    $("btn_dk_uninstall").style.display = "";
     const svc = st.service_active ? "服务运行中" : "⚠ 服务未运行";
     $("docker_status").textContent = `Docker 已安装 · ${st.version || ""} · ${svc} · 容器 ${st.running}/${st.containers}`;
     $("docker_status").className = "v " + (st.service_active ? "ok" : "off");
@@ -1741,6 +1746,19 @@ function installDocker(source) {
     } catch (e) { toast(e.message, "err"); }
     btn.disabled = false; btn.textContent = label === "国内镜像" ? "🇨🇳 国内镜像安装" : "🌐 国外直连安装";
   }, "安装 Docker");
+}
+
+function uninstallDocker() {
+  confirmPanel("确定卸载 Docker？\n\n将停止并禁用 Docker 服务，移除全部 Docker 相关包（国内/国外源安装均会清理）。\n\n⚠ /DockerData 数据目录将保留，如需删除请手动执行：rm -rf /DockerData", async () => {
+    const btn = $("btn_dk_uninstall");
+    btn.disabled = true; btn.textContent = "卸载中...（几分钟）";
+    try {
+      const d = await api("POST", "/api/docker/uninstall", {});
+      toast(d.msg || "卸载完成", d.ok ? "okk" : "err");
+      loadDocker();
+    } catch (e) { toast(e.message, "err"); }
+    btn.disabled = false; btn.textContent = "🗑 一键卸载 Docker";
+  }, "卸载 Docker");
 }
 
 /* ---------- 初始化 ---------- */

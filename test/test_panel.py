@@ -2054,6 +2054,49 @@ class TestDocker(unittest.TestCase):
             panel.DOCKER_DATA_BASE = real_base
             panel.DRY_RUN = True
 
+    def test_docker_uninstall_api(self):
+        """卸载 API：mock uninstall_docker_pkgs 返回成功"""
+        tok = self._token()
+        saved = self._patch_docker(uninstall_docker_pkgs=lambda: (True, "ok"))
+        try:
+            code, d = self._req("POST", "/api/docker/uninstall", {}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_uninstall_docker_apt_covers_both_sources(self):
+        """apt 卸载命令必须包含国内(docker-ce) + 国外(docker.io)两种来源包名"""
+        import types
+        real_run = panel.subprocess.run
+        real_mgr = panel.pkg_mgr
+        real_dry = panel.DRY_RUN
+        calls = []
+
+        def fake_run(args, **kw):
+            calls.append(args)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        try:
+            panel.pkg_mgr = lambda: "apt"
+            panel.DRY_RUN = False
+            panel.subprocess.run = fake_run
+            ok, msg = panel.uninstall_docker_pkgs()
+            self.assertTrue(ok)
+            # 找到 apt-get remove 命令，断言同时含 docker-ce 和 docker.io
+            remove_calls = [a for a in calls if a[0] == "apt-get" and a[1] == "remove"]
+            self.assertTrue(remove_calls)
+            self.assertTrue(any("docker-ce" in a for a in remove_calls))
+            self.assertTrue(any("docker.io" in a for a in remove_calls))
+            self.assertTrue(any("docker-compose-plugin" in a for a in remove_calls))
+            # 停止服务命令存在
+            self.assertTrue(any(a[0] == "systemctl" and a[1] == "stop" for a in calls))
+        finally:
+            panel.subprocess.run = real_run
+            panel.pkg_mgr = real_mgr
+            panel.DRY_RUN = real_dry
+
     def test_docker_logs(self):
         tok = self._token()
         saved = self._patch_docker(docker_logs=lambda cid, tail=200: "log line 1")
