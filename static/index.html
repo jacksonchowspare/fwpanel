@@ -314,6 +314,11 @@ tr:hover td { background: #1d2733; }
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:8px">文件将保存到 /DockerData/dockercompose/&lt;文件夹名称&gt;/docker-compose.yml；留空时自动按 yml 里第一个镜像名命名（如 nginx:latest → nginx）</div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📋 已保存的 Compose 项目</div>
+      <div id="dk_compose_list" style="margin-bottom:8px">
+        <div style="color:var(--muted);font-size:12px">暂无已保存项目</div>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📊 资源监控</div>
       <div class="form-row" style="margin-bottom:8px">
         <span style="color:var(--muted);font-size:12px" id="dk_stats_hint">运行中容器实时 CPU / 内存 / 网络 IO</span>
@@ -1583,7 +1588,7 @@ async function loadDocker() {
       api("GET", "/api/docker/stats"),
     ]);
     dkContainers = c.containers || []; dkImages = im.images || []; dkStats = s.stats || [];
-    renderDocker(); renderDockerImages(); renderDockerStats(); loadDockerDirs();
+    renderDocker(); renderDockerImages(); renderDockerStats(); loadDockerDirs(); loadComposeList();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
 
@@ -1741,6 +1746,54 @@ function setDockerDataRoot() {
       loadDocker();
     } catch (e) { toast(e.message, "err"); }
   }, "配置镜像存储");
+}
+
+async function loadComposeList() {
+  try {
+    const d = await api("GET", "/api/docker/compose");
+    renderComposeList(d.projects || []);
+  } catch (e) { /* 静默 */ }
+}
+
+function renderComposeList(projects) {
+  const el = $("dk_compose_list");
+  if (!projects.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px">暂无已保存项目（Compose 启动后自动出现在这里）</div>';
+    return;
+  }
+  el.innerHTML = projects.map(p => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border)">
+      <span class="v ${p.running ? "ok" : "off"}" style="flex:0 0 auto">${p.running ? "▶ 运行中" : "⏸ 已停止"}</span>
+      <span style="flex:1;min-width:0;word-break:break-all">${p.folder}</span>
+      <span style="color:var(--muted);font-size:12px;flex:0 0 auto">${fmtComposeTime(p.mtime)}</span>
+      <button class="btn mini ${p.running ? "ghost" : ""}" onclick="composeStart('${p.folder}')">启动</button>
+      <button class="btn mini danger" onclick="composeDown('${p.folder}')">停止</button>
+    </div>`).join("");
+}
+
+function fmtComposeTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function composeStart(folder) {
+  try {
+    const d = await api("POST", "/api/docker/compose/start", { folder });
+    toast(d.msg || "已启动", d.ok ? "okk" : "err");
+    loadComposeList();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function composeDown(folder) {
+  confirmPanel(`确定停止并移除项目 ${folder}？\n\n将停止该项目的所有容器并移除（镜像与数据卷保留）。`, async () => {
+    try {
+      const d = await api("POST", "/api/docker/compose/down", { folder });
+      toast(d.msg || "已停止", d.ok ? "okk" : "err");
+      loadComposeList();
+    } catch (e) { toast(e.message, "err"); }
+  }, "停止 Compose 项目");
 }
 
 async function composeUp() {

@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.14"
+CURRENT_VERSION = "1.24.15"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1729,22 +1729,77 @@ def docker_compose_up(content, folder=""):
     return True, f"Compose 启动成功（已保存到 {compose_file}）"
 
 
-def docker_compose_down():
-    """停止并移除 compose 服务（按 yml 镜像名目录查找，兼容旧路径）"""
+def docker_compose_list():
+    """列出已保存的 compose 项目：扫描 /DockerData/dockercompose/*/docker-compose.yml，
+    每条含 folder 名、文件路径、修改时间、运行状态（docker compose ps 是否有运行中容器）"""
+    items = []
+    try:
+        if not os.path.isdir(COMPOSE_BASE):
+            return items
+        for name in sorted(os.listdir(COMPOSE_BASE)):
+            f = os.path.join(COMPOSE_BASE, name, "docker-compose.yml")
+            if not os.path.isfile(f):
+                continue
+            running = False
+            try:
+                r = subprocess.run(["docker", "compose", "-f", f, "ps", "-q"],
+                                   capture_output=True, text=True, timeout=20)
+                if r.returncode == 0 and r.stdout.strip():
+                    running = True
+            except Exception:
+                pass
+            items.append({"folder": name, "path": f,
+                          "mtime": int(os.path.getmtime(f)),
+                          "running": running})
+    except Exception:
+        pass
+    return items
+
+
+def docker_compose_start(folder):
+    """重新启动已保存的 compose 项目（docker compose -f <项目目录>/docker-compose.yml up -d）"""
+    if DRY_RUN:
+        return True, f"DRY_RUN: compose start {folder}"
+    folder = (folder or "").strip()
+    if not folder:
+        return False, "缺少项目文件夹名称"
+    compose_file = os.path.join(COMPOSE_BASE, folder, "docker-compose.yml")
+    if not os.path.exists(compose_file):
+        return False, f"未找到项目 {folder}（{compose_file} 不存在）"
+    try:
+        r = subprocess.run(["docker", "compose", "-f", compose_file, "up", "-d"],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout).strip()[:400]
+    except subprocess.TimeoutExpired:
+        return False, "启动超时（5 分钟）"
+    except Exception as e:
+        return False, f"启动失败: {e}"
+    return True, f"项目 {folder} 已启动"
+
+
+def docker_compose_down(folder=""):
+    """停止并移除指定 compose 项目（folder 必填；兼容旧调用不带 folder 时取最新修改的）"""
     if DRY_RUN:
         return True, "DRY_RUN: compose down"
     target = ""
-    # 扫描 /DockerData/dockercompose/*/docker-compose.yml（有多个就取最新修改的）
-    try:
-        if os.path.isdir(COMPOSE_BASE):
-            candidates = []
-            for root, dirs, files in os.walk(COMPOSE_BASE):
-                if "docker-compose.yml" in files:
-                    candidates.append(os.path.join(root, "docker-compose.yml"))
-            if candidates:
-                target = max(candidates, key=os.path.getmtime)
-    except Exception:
-        pass
+    folder = (folder or "").strip()
+    if folder:
+        candidate = os.path.join(COMPOSE_BASE, folder, "docker-compose.yml")
+        if os.path.exists(candidate):
+            target = candidate
+    if not target:
+        # 兼容：不带 folder 时扫描 /DockerData/dockercompose/*/（有多个就取最新修改的）
+        try:
+            if os.path.isdir(COMPOSE_BASE):
+                candidates = []
+                for root, dirs, files in os.walk(COMPOSE_BASE):
+                    if "docker-compose.yml" in files:
+                        candidates.append(os.path.join(root, "docker-compose.yml"))
+                if candidates:
+                    target = max(candidates, key=os.path.getmtime)
+        except Exception:
+            pass
     if not target:
         target = COMPOSE_FILE_LEGACY if os.path.exists(COMPOSE_FILE_LEGACY) else ""
     if not target:
@@ -1756,7 +1811,7 @@ def docker_compose_down():
             return False, (r.stderr or r.stdout).strip()[:400]
     except Exception as e:
         return False, f"Compose 停止失败: {e}"
-    return True, "Compose 已停止"
+    return True, f"Compose 已停止{f'（{folder}）' if folder else ''}"
 
 
 # Docker 数据目录基础路径（/DockerData，env 可覆盖便于测试）
@@ -2133,6 +2188,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_docker_stats()
         elif path == "/api/docker/dirs":
             self._api_docker_dirs_status()
+        elif path == "/api/docker/compose":
+            self._api_docker_compose_list()
         elif path.startswith("/api/docker/logs/"):
             self._api_docker_logs(path[len("/api/docker/logs/"):])
         elif path == "/api/rules":
@@ -2220,6 +2277,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_docker_data_root()
         elif path == "/api/docker/compose/up":
             self._api_docker_compose_up()
+        elif path == "/api/docker/compose/start":
+            self._api_docker_compose_start()
         elif path == "/api/docker/compose/down":
             self._api_docker_compose_down()
         elif path == "/api/docker/dirs":
@@ -2644,12 +2703,34 @@ class PanelHandler(BaseHTTPRequestHandler):
         ok, msg = docker_compose_up(content, str(data.get("folder", "")))
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
-    def _api_docker_compose_down(self):
-        """POST /api/docker/compose/down → 停止 compose 服务"""
+    def _api_docker_compose_list(self):
+        """GET /api/docker/compose → 已保存的 compose 项目列表"""
         token = self._require_auth()
         if token is None:
             return
-        ok, msg = docker_compose_down()
+        self._send(200, {"projects": docker_compose_list()})
+
+    def _api_docker_compose_start(self):
+        """POST /api/docker/compose/start {folder} → 启动指定已保存项目"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        folder = str(data.get("folder", "")).strip()
+        if not folder:
+            self._send(400, {"error": "缺少项目文件夹名称"})
+            return
+        ok, msg = docker_compose_start(folder)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_compose_down(self):
+        """POST /api/docker/compose/down {folder} → 停止指定 compose 项目"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        folder = str(data.get("folder", ""))
+        ok, msg = docker_compose_down(folder)
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_dirs_create(self):

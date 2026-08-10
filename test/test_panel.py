@@ -1979,7 +1979,7 @@ class TestDocker(unittest.TestCase):
 
     def test_docker_compose_down(self):
         tok = self._token()
-        saved = self._patch_docker(docker_compose_down=lambda: (True, "down"))
+        saved = self._patch_docker(docker_compose_down=lambda folder="": (True, "down"))
         try:
             code, d = self._req("POST", "/api/docker/compose/down", {}, token=tok)
             self.assertEqual(code, 200)
@@ -2323,6 +2323,72 @@ class TestDocker(unittest.TestCase):
             expected = os.path.join(tmp, "dockercompose", "my-web", "docker-compose.yml")
             self.assertTrue(os.path.exists(expected))
             self.assertIn("my-web", msg)
+        finally:
+            panel.subprocess.run = real_run
+            panel.COMPOSE_BASE = real_base
+            panel.DRY_RUN = real_dry
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_docker_compose_list_api(self):
+        """已保存 compose 项目列表 API"""
+        tok = self._token()
+        saved = self._patch_docker(
+            docker_compose_list=lambda: [{"folder": "nginx", "path": "/x/docker-compose.yml",
+                                          "mtime": 1234567890, "running": True}])
+        try:
+            code, d = self._req("GET", "/api/docker/compose", token=tok)
+            self.assertEqual(code, 200)
+            self.assertEqual(len(d["projects"]), 1)
+            self.assertEqual(d["projects"][0]["folder"], "nginx")
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_compose_start_api(self):
+        """启动指定 compose 项目 API"""
+        tok = self._token()
+        saved = self._patch_docker(docker_compose_start=lambda folder: (True, "started"))
+        try:
+            code, d = self._req("POST", "/api/docker/compose/start",
+                                {"folder": "nginx"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_compose_start_missing_folder(self):
+        """启动缺少 folder 应 400"""
+        tok = self._token()
+        code, d = self._req("POST", "/api/docker/compose/start", {}, token=tok)
+        self.assertEqual(code, 400)
+
+    def test_docker_compose_down_with_folder(self):
+        """停止指定项目：docker compose down 必须用 folder 对应文件"""
+        import types
+        real_run = panel.subprocess.run
+        real_base = panel.COMPOSE_BASE
+        real_dry = panel.DRY_RUN
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-compose-down-")
+            panel.COMPOSE_BASE = os.path.join(tmp, "dockercompose")
+            # 造两个项目
+            for name in ("nginx", "webstack"):
+                d = os.path.join(panel.COMPOSE_BASE, name)
+                os.makedirs(d, exist_ok=True)
+                with open(os.path.join(d, "docker-compose.yml"), "w") as f:
+                    f.write("services: {}\n")
+            panel.DRY_RUN = False
+            calls = []
+            panel.subprocess.run = lambda args, **kw: calls.append(args) or types.SimpleNamespace(
+                returncode=0, stdout="", stderr="")
+            ok, msg = panel.docker_compose_down("webstack")
+            self.assertTrue(ok)
+            # 断言用的文件是 webstack 的
+            down_calls = [a for a in calls if a[0] == "docker" and a[1] == "compose" and a[-1] == "down"]
+            self.assertTrue(down_calls)
+            self.assertIn("webstack", down_calls[0][down_calls[0].index("-f") + 1])
+            self.assertNotIn("nginx", down_calls[0][down_calls[0].index("-f") + 1])
         finally:
             panel.subprocess.run = real_run
             panel.COMPOSE_BASE = real_base
