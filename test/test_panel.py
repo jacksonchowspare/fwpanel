@@ -2098,16 +2098,16 @@ class TestDocker(unittest.TestCase):
             panel.DRY_RUN = real_dry
 
     def test_compose_file_saved_to_dockerdata(self):
-        """compose up 必须把文件保存到 /DockerData/compose（用户要求），不落 /etc/fwpanel"""
+        """compose up 必须把文件保存到 /DockerData/dockercompose/<镜像名>/（用户要求）"""
         import types
         real_run = panel.subprocess.run
-        real_compose = panel.COMPOSE_FILE
+        real_base = panel.COMPOSE_BASE
         real_legacy = panel.COMPOSE_FILE_LEGACY
         real_dry = panel.DRY_RUN
         real_makedirs = os.makedirs
         try:
             tmp = tempfile.mkdtemp(prefix="fw-compose-test-")
-            panel.COMPOSE_FILE = os.path.join(tmp, "compose", "docker-compose.yml")
+            panel.COMPOSE_BASE = os.path.join(tmp, "dockercompose")
             panel.COMPOSE_FILE_LEGACY = os.path.join(tmp, "etc-fwpanel", "docker-compose.yml")
             panel.DRY_RUN = False
             os.makedirs = lambda p, exist_ok=False: real_makedirs(p, exist_ok=True)
@@ -2116,15 +2116,16 @@ class TestDocker(unittest.TestCase):
                 return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
             panel.subprocess.run = fake_run
-            ok, msg = panel.docker_compose_up("services:\n  web:\n    image: nginx\n")
+            content = "services:\n  web:\n    image: nginx:latest\n"
+            ok, msg = panel.docker_compose_up(content)
             self.assertTrue(ok)
-            # 文件必须落在 compose 子目录
-            self.assertTrue(os.path.exists(panel.COMPOSE_FILE))
-            self.assertFalse(os.path.exists(os.path.join(tmp, "etc-fwpanel")))
-            self.assertIn("compose", msg)
+            # 文件必须落在 dockercompose/<镜像名>/ 子目录
+            expected = os.path.join(tmp, "dockercompose", "nginx", "docker-compose.yml")
+            self.assertTrue(os.path.exists(expected))
+            self.assertIn("nginx", msg)
         finally:
             panel.subprocess.run = real_run
-            panel.COMPOSE_FILE = real_compose
+            panel.COMPOSE_BASE = real_base
             panel.COMPOSE_FILE_LEGACY = real_legacy
             panel.DRY_RUN = real_dry
             os.makedirs = real_makedirs
@@ -2134,13 +2135,13 @@ class TestDocker(unittest.TestCase):
         """旧路径（/etc/fwpanel）已有文件时，up 自动迁移到新路径"""
         import types
         real_run = panel.subprocess.run
-        real_compose = panel.COMPOSE_FILE
+        real_base = panel.COMPOSE_BASE
         real_legacy = panel.COMPOSE_FILE_LEGACY
         real_dry = panel.DRY_RUN
         real_makedirs = os.makedirs
         try:
             tmp = tempfile.mkdtemp(prefix="fw-compose-legacy-")
-            panel.COMPOSE_FILE = os.path.join(tmp, "compose", "docker-compose.yml")
+            panel.COMPOSE_BASE = os.path.join(tmp, "dockercompose")
             legacy_dir = os.path.join(tmp, "etc-fwpanel")
             os.makedirs(legacy_dir, exist_ok=True)
             panel.COMPOSE_FILE_LEGACY = os.path.join(legacy_dir, "docker-compose.yml")
@@ -2153,13 +2154,14 @@ class TestDocker(unittest.TestCase):
                 return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
             panel.subprocess.run = fake_run
-            ok, _ = panel.docker_compose_up("services:\n  web:\n    image: nginx\n")
+            ok, _ = panel.docker_compose_up("services:\n  web:\n    image: redis:7\n")
             self.assertTrue(ok)
             # 新文件已存在（up 写入内容覆盖迁移的旧内容，文件必须在新路径）
-            self.assertTrue(os.path.exists(panel.COMPOSE_FILE))
+            expected = os.path.join(tmp, "dockercompose", "redis", "docker-compose.yml")
+            self.assertTrue(os.path.exists(expected))
         finally:
             panel.subprocess.run = real_run
-            panel.COMPOSE_FILE = real_compose
+            panel.COMPOSE_BASE = real_base
             panel.COMPOSE_FILE_LEGACY = real_legacy
             panel.DRY_RUN = real_dry
             os.makedirs = real_makedirs
@@ -2196,6 +2198,73 @@ class TestDocker(unittest.TestCase):
         finally:
             for name, fn in saved.items():
                 setattr(panel, name, fn)
+
+    def test_set_docker_data_root(self):
+        """配置 data-root：daemon.json 写入 /DockerData/dockerimage，保留已有字段"""
+        import types
+        real_daemon = panel.DOCKER_DAEMON_JSON
+        real_base = panel.DOCKER_DATA_BASE
+        real_dry = panel.DRY_RUN
+        real_run = panel.subprocess.run
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-daemon-test-")
+            panel.DOCKER_DAEMON_JSON = os.path.join(tmp, "daemon.json")
+            panel.DOCKER_DATA_BASE = os.path.join(tmp, "DockerData")
+            panel.DRY_RUN = False
+            # 预置已有配置（保留字段）
+            with open(panel.DOCKER_DAEMON_JSON, "w") as f:
+                json.dump({"registry-mirrors": ["https://x.example"]}, f)
+            panel.subprocess.run = lambda args, **kw: types.SimpleNamespace(
+                returncode=0, stdout="", stderr="")
+            ok, msg = panel.set_docker_data_root()
+            self.assertTrue(ok)
+            with open(panel.DOCKER_DAEMON_JSON) as f:
+                conf = json.load(f)
+            self.assertEqual(conf["data-root"], os.path.join(tmp, "DockerData", "dockerimage"))
+            # 已有字段保留
+            self.assertEqual(conf["registry-mirrors"], ["https://x.example"])
+            self.assertIn("dockerimage", msg)
+        finally:
+            panel.DOCKER_DAEMON_JSON = real_daemon
+            panel.DOCKER_DATA_BASE = real_base
+            panel.DRY_RUN = real_dry
+            panel.subprocess.run = real_run
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_docker_create_auto_volume(self):
+        """创建容器自动挂载 /DockerData/dockerrun/<容器名>:/data"""
+        import types
+        real_run = panel.subprocess.run
+        real_base = panel.DOCKER_DATA_BASE
+        real_dry = panel.DRY_RUN
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-run-test-")
+            panel.DOCKER_DATA_BASE = os.path.join(tmp, "DockerData")
+            panel.DRY_RUN = False
+            calls = []
+
+            def fake_run(args, **kw):
+                calls.append(args)
+                return types.SimpleNamespace(returncode=0, stdout="abc123", stderr="")
+
+            panel.subprocess.run = fake_run
+            ok, msg = panel.docker_create("web1", "nginx:latest", ports="8080:80", envs="A=1")
+            self.assertTrue(ok)
+            self.assertTrue(calls)
+            run_args = calls[-1]
+            # 断言 -v /DockerData/dockerrun/web1:/data 存在
+            vol = os.path.join(tmp, "DockerData", "dockerrun", "web1") + ":/data"
+            self.assertIn("-v", run_args)
+            self.assertIn(vol, run_args)
+            self.assertIn("-p", run_args)
+            self.assertIn("8080:80", run_args)
+            # 数据目录已创建
+            self.assertTrue(os.path.isdir(os.path.join(tmp, "DockerData", "dockerrun", "web1")))
+        finally:
+            panel.subprocess.run = real_run
+            panel.DOCKER_DATA_BASE = real_base
+            panel.DRY_RUN = real_dry
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_docker_logs(self):
         tok = self._token()

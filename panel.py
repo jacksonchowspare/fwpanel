@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.9"
+CURRENT_VERSION = "1.24.10"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1210,10 +1210,10 @@ def docker_available():
 
 
 def docker_status():
-    """Docker 状态：{installed, service_active, version, containers, running}"""
+    """Docker 状态：{installed, service_active, version, containers, running, data_root}"""
     if not docker_available():
         return {"installed": False, "service_active": False,
-                "version": "", "containers": 0, "running": 0}
+                "version": "", "containers": 0, "running": 0, "data_root": ""}
     version = ""
     try:
         r = subprocess.run(["docker", "--version"], capture_output=True, text=True, timeout=10)
@@ -1238,8 +1238,18 @@ def docker_status():
             running = len([x for x in r2.stdout.splitlines() if x.strip()])
     except Exception:
         pass
+    # 读取当前 data-root（docker info）
+    data_root = ""
+    try:
+        ri = subprocess.run(["docker", "info", "--format", "{{.DockerRootDir}}"],
+                            capture_output=True, text=True, timeout=15)
+        if ri.returncode == 0:
+            data_root = ri.stdout.strip()
+    except Exception:
+        pass
     return {"installed": True, "service_active": service_active,
-            "version": version, "containers": containers, "running": running}
+            "version": version, "containers": containers, "running": running,
+            "data_root": data_root}
 
 
 def install_docker_pkgs(source="official"):
@@ -1606,10 +1616,18 @@ def docker_rmi(image_id):
 
 
 def docker_create(name, image, ports="", envs=""):
-    """创建容器：name/镜像/端口映射(宿:容,逗号分隔)/环境变量(KEY=V,逗号分隔)"""
+    """创建容器：name/镜像/端口映射(宿:容,逗号分隔)/环境变量(KEY=V,逗号分隔)。
+    自动创建 /DockerData/dockerrun/<容器名> 数据目录并挂载到容器 /data（v1.24.10）"""
     if DRY_RUN:
         return True, f"DRY_RUN: create {name} from {image}"
     args = ["docker", "run", "-d", "--name", name]
+    # 自动数据卷：/DockerData/dockerrun/<name> → /data
+    vol_dir = os.path.join(DOCKER_DATA_BASE, "dockerrun", name)
+    try:
+        os.makedirs(vol_dir, exist_ok=True)
+    except Exception:
+        pass
+    args += ["-v", f"{vol_dir}:/data"]
     for kv in [x.strip() for x in ports.split(",") if x.strip()]:
         args += ["-p", kv]
     for kv in [x.strip() for x in envs.split(",") if x.strip()]:
@@ -1621,46 +1639,88 @@ def docker_create(name, image, ports="", envs=""):
         return False, "创建超时（5 分钟）"
     if r.returncode != 0:
         return False, (r.stderr or r.stdout).strip()[:300]
-    return True, f"容器 {name} 创建成功"
+    return True, f"容器 {name} 创建成功（数据卷已挂载 {vol_dir}:/data）"
 
 
-# Compose 文件路径（优先 /DockerData/compose，与「一键创建存储目录」保持一致；
-# 兼容旧版本保存到 /etc/fwpanel 的路径，env 可覆盖便于测试）
-COMPOSE_FILE = os.environ.get("FW_COMPOSE_FILE", "/DockerData/compose/docker-compose.yml")
+# Compose 文件根目录（/DockerData/dockercompose，env 可覆盖便于测试），
+# 每个 compose 按 yml 里第一个镜像名建独立子目录
 COMPOSE_FILE_LEGACY = "/etc/fwpanel/docker-compose.yml"
 
 
+def _compose_dir_from_content(content):
+    """从 docker-compose.yml 内容解析第一个服务镜像名，生成独立子目录名。
+    找不到镜像名时回退 'default'；镜像名做安全净化（只留字母数字-_.）"""
+    name = "default"
+    try:
+        # 匹配 services: 段内第一个 image: xxx（忽略注释行）
+        for line in content.splitlines():
+            s = line.strip()
+            if s.startswith("#") or ":" not in s:
+                continue
+            key, _, val = s.partition(":")
+            if key.strip() == "image":
+                img = val.strip().strip('"\'')
+                if img:
+                    # 去掉 tag 和仓库前缀，如 docker.io/library/nginx:latest → nginx
+                    img = img.rsplit("/", 1)[-1].split(":", 1)[0]
+                    img = re.sub(r"[^A-Za-z0-9_.-]", "", img)
+                    if img:
+                        name = img
+                break
+    except Exception:
+        pass
+    return name
+
+
+def _compose_file_for(content):
+    """compose 文件路径：/DockerData/dockercompose/<镜像名>/docker-compose.yml"""
+    return os.path.join(COMPOSE_BASE, _compose_dir_from_content(content), "docker-compose.yml")
+
+
 def docker_compose_up(content):
-    """保存 docker-compose.yml 到 /DockerData/compose 并启动（兼容旧路径自动迁移）"""
+    """保存 docker-compose.yml 到 /DockerData/dockercompose/<镜像名>/ 并启动（兼容旧路径自动迁移）"""
     if DRY_RUN:
         return True, "DRY_RUN: compose up"
     try:
-        d = os.path.dirname(COMPOSE_FILE)
+        compose_file = _compose_file_for(content)
+        d = os.path.dirname(compose_file)
         os.makedirs(d, exist_ok=True)
         # 旧路径存在且新路径不存在 → 迁移（保留旧数据目录一致）
-        if os.path.exists(COMPOSE_FILE_LEGACY) and not os.path.exists(COMPOSE_FILE):
+        if os.path.exists(COMPOSE_FILE_LEGACY) and not os.path.exists(compose_file):
             try:
-                shutil.copy2(COMPOSE_FILE_LEGACY, COMPOSE_FILE)
+                shutil.copy2(COMPOSE_FILE_LEGACY, compose_file)
             except Exception:
                 pass
-        with open(COMPOSE_FILE, "w") as f:
+        with open(compose_file, "w") as f:
             f.write(content)
-        r = subprocess.run(["docker", "compose", "-f", COMPOSE_FILE,
+        r = subprocess.run(["docker", "compose", "-f", compose_file,
                             "up", "-d"],
                            capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
             return False, (r.stderr or r.stdout).strip()[:400]
     except Exception as e:
         return False, f"Compose 启动失败: {e}"
-    return True, f"Compose 启动成功（已保存到 {COMPOSE_FILE}）"
+    return True, f"Compose 启动成功（已保存到 {compose_file}）"
 
 
 def docker_compose_down():
-    """停止并移除 compose 服务（读取已保存的 yml，兼容新旧路径）"""
+    """停止并移除 compose 服务（按 yml 镜像名目录查找，兼容旧路径）"""
     if DRY_RUN:
         return True, "DRY_RUN: compose down"
-    target = COMPOSE_FILE if os.path.exists(COMPOSE_FILE) else (
-        COMPOSE_FILE_LEGACY if os.path.exists(COMPOSE_FILE_LEGACY) else "")
+    target = ""
+    # 扫描 /DockerData/dockercompose/*/docker-compose.yml（有多个就取最新修改的）
+    try:
+        if os.path.isdir(COMPOSE_BASE):
+            candidates = []
+            for root, dirs, files in os.walk(COMPOSE_BASE):
+                if "docker-compose.yml" in files:
+                    candidates.append(os.path.join(root, "docker-compose.yml"))
+            if candidates:
+                target = max(candidates, key=os.path.getmtime)
+    except Exception:
+        pass
+    if not target:
+        target = COMPOSE_FILE_LEGACY if os.path.exists(COMPOSE_FILE_LEGACY) else ""
     if not target:
         return False, "尚未保存 docker-compose.yml，请先执行「Compose 启动」"
     try:
@@ -1675,16 +1735,20 @@ def docker_compose_down():
 
 # Docker 数据目录基础路径（/DockerData，env 可覆盖便于测试）
 DOCKER_DATA_BASE = os.environ.get("FW_DOCKER_DATA", "/DockerData")
-# 一键创建的常用 Docker 数据目录（挂载卷直接用 -v /DockerData/<名>:<容器路径>）
-DOCKER_DATA_DIRS = [
-    "mysql", "redis", "nginx", "postgres", "mongo", "rabbitmq",
-    "elasticsearch", "kafka", "portainer", "gitea", "jellyfin",
-    "data", "backup", "logs", "compose",
-]
+# 三个核心目录（v1.24.10 精简，用户要求）：
+#   dockerimage   → 镜像存储（daemon.json data-root）
+#   dockercompose → compose 文件（按镜像名分子目录）
+#   dockerrun     → 面板创建容器的数据卷（自动挂载 /data）
+DOCKER_DATA_DIRS = ["dockerimage", "dockercompose", "dockerrun"]
+# daemon.json 路径（env 可覆盖便于测试）
+DOCKER_DAEMON_JSON = os.environ.get("FW_DOCKER_DAEMON_JSON", "/etc/docker/daemon.json")
+# Compose 文件根目录（/DockerData/dockercompose，env 可覆盖便于测试），
+# 每个 compose 按 yml 里第一个镜像名建独立子目录
+COMPOSE_BASE = os.environ.get("FW_COMPOSE_BASE", os.path.join(DOCKER_DATA_BASE, "dockercompose"))
 
 
 def create_docker_dirs():
-    """在根目录创建 /DockerData 及常用 Docker 数据子目录（幂等，已存在不报错）"""
+    """在根目录创建 /DockerData 及三个核心子目录（幂等，已存在不报错）"""
     if DRY_RUN:
         return True, f"DRY_RUN: 创建目录（{DOCKER_DATA_BASE} + {len(DOCKER_DATA_DIRS)} 个子目录）"
     created = []
@@ -1698,7 +1762,40 @@ def create_docker_dirs():
             created.append(d)
     except Exception as e:
         return False, f"创建目录失败: {e}"
-    return True, f"已创建 {len(created)} 个目录：{DOCKER_DATA_BASE}（含 {len(DOCKER_DATA_DIRS)} 个常用子目录）"
+    return True, f"已创建 {len(created)} 个目录：{DOCKER_DATA_BASE}（含 {len(DOCKER_DATA_DIRS)} 个核心子目录）"
+
+
+def set_docker_data_root():
+    """配置 Docker 镜像存储目录 → daemon.json data-root=/DockerData/dockerimage。
+    保留 daemon.json 已有配置项（合并写入），幂等。返回 (ok, msg)"""
+    if DRY_RUN:
+        return True, "DRY_RUN: 配置 data-root"
+    target = os.path.join(DOCKER_DATA_BASE, "dockerimage")
+    try:
+        # 先确保目录存在
+        os.makedirs(target, exist_ok=True)
+        d = os.path.dirname(DOCKER_DAEMON_JSON)
+        os.makedirs(d, exist_ok=True)
+        # 读已有配置合并（保留其他字段如 registry-mirrors）
+        conf = {}
+        if os.path.exists(DOCKER_DAEMON_JSON):
+            try:
+                with open(DOCKER_DAEMON_JSON) as f:
+                    conf = json.load(f)
+            except Exception:
+                conf = {}
+        conf["data-root"] = target
+        tmp = DOCKER_DAEMON_JSON + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(conf, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, DOCKER_DAEMON_JSON)
+        # 重启 docker 使配置生效
+        subprocess.run(["systemctl", "restart", "docker"],
+                       capture_output=True, text=True, timeout=120)
+    except Exception as e:
+        return False, f"配置失败: {e}"
+    return True, f"镜像存储已指向 {target}（Docker 已重启）"
 
 
 def nginx_supports_reject_handshake():
@@ -2093,6 +2190,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_docker_rmi()
         elif path == "/api/docker/prune":
             self._api_docker_prune()
+        elif path == "/api/docker/data-root":
+            self._api_docker_data_root()
         elif path == "/api/docker/compose/up":
             self._api_docker_compose_up()
         elif path == "/api/docker/compose/down":
@@ -2496,6 +2595,14 @@ class PanelHandler(BaseHTTPRequestHandler):
         if token is None:
             return
         ok, msg = docker_image_prune()
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_data_root(self):
+        """POST /api/docker/data-root → 配置镜像存储目录为 /DockerData/dockerimage"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = set_docker_data_root()
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_compose_up(self):

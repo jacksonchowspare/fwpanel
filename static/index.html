@@ -275,7 +275,7 @@ tr:hover td { background: #1d2733; }
         <input id="dk_envs" placeholder="环境变量 KEY=V（多个逗号分隔）" style="flex:1;min-width:140px">
         <button class="btn" onclick="createDocker()">创建容器</button>
       </div>
-      <div style="color:var(--muted);font-size:12px;margin-bottom:12px">端口映射格式：宿主机端口:容器端口（如 8080:80）；环境变量格式：KEY=值，多个用逗号分隔</div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:12px">端口映射格式：宿主机端口:容器端口（如 8080:80）；环境变量格式：KEY=值，多个用逗号分隔。创建时自动挂载数据卷 /DockerData/dockerrun/&lt;容器名&gt;:/data</div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">🖼 镜像管理</div>
       <div class="form-row" style="margin-bottom:8px">
@@ -298,8 +298,12 @@ tr:hover td { background: #1d2733; }
         <button class="btn" onclick="createDockerDirs()">一键创建存储目录</button>
         <span style="color:var(--muted);font-size:12px" id="dk_dirs_status">检测中...</span>
       </div>
-      <div style="color:var(--muted);font-size:12px;margin-bottom:8px">在根目录创建 /DockerData，并自动创建常用子目录（mysql / redis / nginx / postgres / mongo / rabbitmq / elasticsearch / kafka / portainer / gitea / jellyfin / data / backup / logs / compose），已存在的目录不会重复创建</div>
-      <div style="font-family:monospace;font-size:12px;background:#0d1218;border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);margin-bottom:12px;word-break:break-all">容器挂载卷：-v /DockerData/&lt;目录名&gt;:&lt;容器路径&gt;</div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:8px">在根目录创建 /DockerData 及三个核心子目录：<b style="color:var(--text)">dockerimage</b>（镜像存储）/ <b style="color:var(--text)">dockercompose</b>（compose 文件）/ <b style="color:var(--text)">dockerrun</b>（容器数据卷），已存在的目录不会重复创建</div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:8px">目录规则：拉取的镜像 → dockerimage（需点击下方按钮配置生效）· compose 输入框创建的容器 → dockercompose/<镜像名>/ · 创建容器生成的数据卷 → dockerrun/<容器名>:/data</div>
+      <div class="form-row" style="margin-bottom:12px">
+        <button class="btn ghost" onclick="setDockerDataRoot()">📦 配置镜像存储到 /DockerData/dockerimage</button>
+        <span style="color:var(--muted);font-size:12px" id="dk_dataroot_status">检测中...</span>
+      </div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📋 Docker Compose</div>
       <textarea id="dk_compose" placeholder="粘贴 docker-compose.yml 内容..." style="width:100%;min-height:120px;font-family:monospace;font-size:12px;box-sizing:border-box;margin-bottom:8px"></textarea>
@@ -1556,6 +1560,19 @@ async function loadDocker() {
     const svc = st.service_active ? "服务运行中" : "⚠ 服务未运行";
     $("docker_status").textContent = `Docker 已安装 · ${st.version || ""} · ${svc} · 容器 ${st.running}/${st.containers}`;
     $("docker_status").className = "v " + (st.service_active ? "ok" : "off");
+    // 镜像存储目录状态
+    const dr = $("dk_dataroot_status");
+    if (st.data_root) {
+      if (st.data_root.indexOf("DockerData") !== -1) {
+        dr.textContent = `✅ 镜像存储：${st.data_root}`;
+        dr.style.color = "var(--accent2)";
+      } else {
+        dr.textContent = `当前：${st.data_root}（默认位置，点击按钮迁移到 /DockerData/dockerimage）`;
+        dr.style.color = "var(--warn)";
+      }
+    } else {
+      dr.textContent = "";
+    }
     const [c, im, s] = await Promise.all([
       api("GET", "/api/docker/containers"),
       api("GET", "/api/docker/images"),
@@ -1703,13 +1720,23 @@ async function loadDockerDirs() {
 }
 
 function createDockerDirs() {
-  confirmPanel("确定创建 Docker 存储目录？\n\n将在根目录创建 /DockerData，并自动创建 15 个常用子目录（mysql / redis / nginx / postgres / mongo / rabbitmq / elasticsearch / kafka / portainer / gitea / jellyfin / data / backup / logs / compose）。已存在的目录不会重复创建。", async () => {
+  confirmPanel("确定创建 Docker 存储目录？\n\n将在根目录创建 /DockerData，并自动创建 3 个核心子目录：\ndockerimage（镜像存储）/ dockercompose（compose 文件）/ dockerrun（容器数据卷）。\n已存在的目录不会重复创建。", async () => {
     try {
       const d = await api("POST", "/api/docker/dirs", {});
       toast(d.msg || "创建完成", d.ok ? "okk" : "err");
       loadDockerDirs();
     } catch (e) { toast(e.message, "err"); }
   }, "创建存储目录");
+}
+
+function setDockerDataRoot() {
+  confirmPanel("配置 Docker 镜像存储目录？\n\n将修改 /etc/docker/daemon.json 的 data-root 为 /DockerData/dockerimage，并重启 Docker 服务。\n\n⚠ 已有镜像/容器不会自动迁移到新位置，建议在刚安装、还没拉取镜像时配置。", async () => {
+    try {
+      const d = await api("POST", "/api/docker/data-root", {});
+      toast(d.msg || "配置完成", d.ok ? "okk" : "err");
+      loadDocker();
+    } catch (e) { toast(e.message, "err"); }
+  }, "配置镜像存储");
 }
 
 async function composeUp() {
