@@ -2395,6 +2395,50 @@ class TestDocker(unittest.TestCase):
             panel.DRY_RUN = real_dry
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_docker_compose_upgrade_api(self):
+        """升级 compose 项目 API"""
+        tok = self._token()
+        saved = self._patch_docker(docker_compose_upgrade=lambda folder: (True, "upgraded"))
+        try:
+            code, d = self._req("POST", "/api/docker/compose/upgrade",
+                                {"folder": "nginx"}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_compose_upgrade_sequence(self):
+        """升级命令序列：先 pull 后 up -d"""
+        import types
+        real_run = panel.subprocess.run
+        real_base = panel.COMPOSE_BASE
+        real_dry = panel.DRY_RUN
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-compose-upgrade-")
+            panel.COMPOSE_BASE = os.path.join(tmp, "dockercompose")
+            d = os.path.join(panel.COMPOSE_BASE, "nginx")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "docker-compose.yml"), "w") as f:
+                f.write("services: {}\n")
+            panel.DRY_RUN = False
+            calls = []
+            panel.subprocess.run = lambda args, **kw: calls.append(args) or types.SimpleNamespace(
+                returncode=0, stdout="", stderr="")
+            ok, msg = panel.docker_compose_upgrade("nginx")
+            self.assertTrue(ok)
+            # 命令格式: ['docker','compose','-f',file,'pull'] / [...'up','-d']
+            actions = [a[-2] if a[-1] == "-d" else a[-1] for a in calls]
+            self.assertIn("pull", actions)
+            self.assertIn("up", actions)
+            # pull 在 up 之前
+            self.assertLess(actions.index("pull"), actions.index("up"))
+        finally:
+            panel.subprocess.run = real_run
+            panel.COMPOSE_BASE = real_base
+            panel.DRY_RUN = real_dry
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_docker_logs(self):
         tok = self._token()
         saved = self._patch_docker(docker_logs=lambda cid, tail=200: "log line 1")

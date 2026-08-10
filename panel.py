@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.15"
+CURRENT_VERSION = "1.24.16"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1778,6 +1778,34 @@ def docker_compose_start(folder):
     return True, f"项目 {folder} 已启动"
 
 
+def docker_compose_upgrade(folder):
+    """升级已保存的 compose 项目：先 docker compose pull 拉最新镜像，再 up -d 重建容器"""
+    if DRY_RUN:
+        return True, f"DRY_RUN: compose upgrade {folder}"
+    folder = (folder or "").strip()
+    if not folder:
+        return False, "缺少项目文件夹名称"
+    compose_file = os.path.join(COMPOSE_BASE, folder, "docker-compose.yml")
+    if not os.path.exists(compose_file):
+        return False, f"未找到项目 {folder}（{compose_file} 不存在）"
+    try:
+        # 1. 拉取最新镜像
+        r = subprocess.run(["docker", "compose", "-f", compose_file, "pull"],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            return False, f"拉取最新镜像失败: {(r.stderr or r.stdout).strip()[:400]}"
+        # 2. 重建容器（检测到镜像变化会自动 recreate）
+        r = subprocess.run(["docker", "compose", "-f", compose_file, "up", "-d"],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            return False, f"重建容器失败: {(r.stderr or r.stdout).strip()[:400]}"
+    except subprocess.TimeoutExpired:
+        return False, "升级超时（10 分钟）"
+    except Exception as e:
+        return False, f"升级失败: {e}"
+    return True, f"项目 {folder} 已升级（镜像已更新并重建）"
+
+
 def docker_compose_down(folder=""):
     """停止并移除指定 compose 项目（folder 必填；兼容旧调用不带 folder 时取最新修改的）"""
     if DRY_RUN:
@@ -2279,6 +2307,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_docker_compose_up()
         elif path == "/api/docker/compose/start":
             self._api_docker_compose_start()
+        elif path == "/api/docker/compose/upgrade":
+            self._api_docker_compose_upgrade()
         elif path == "/api/docker/compose/down":
             self._api_docker_compose_down()
         elif path == "/api/docker/dirs":
@@ -2721,6 +2751,19 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "缺少项目文件夹名称"})
             return
         ok, msg = docker_compose_start(folder)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_compose_upgrade(self):
+        """POST /api/docker/compose/upgrade {folder} → 升级指定已保存项目（拉最新镜像+重建）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        folder = str(data.get("folder", "")).strip()
+        if not folder:
+            self._send(400, {"error": "缺少项目文件夹名称"})
+            return
+        ok, msg = docker_compose_upgrade(folder)
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_compose_down(self):

@@ -1767,6 +1767,7 @@ function renderComposeList(projects) {
       <span style="flex:1;min-width:0;word-break:break-all">${p.folder}</span>
       <span style="color:var(--muted);font-size:12px;flex:0 0 auto">${fmtComposeTime(p.mtime)}</span>
       <button class="btn mini ${p.running ? "ghost" : ""}" onclick="composeStart('${p.folder}')">启动</button>
+      <button class="btn mini ghost" onclick="composeUpgrade('${p.folder}')">升级</button>
       <button class="btn mini danger" onclick="composeDown('${p.folder}')">停止</button>
     </div>`).join("");
 }
@@ -1784,6 +1785,16 @@ async function composeStart(folder) {
     toast(d.msg || "已启动", d.ok ? "okk" : "err");
     loadComposeList();
   } catch (e) { toast(e.message, "err"); }
+}
+
+function composeUpgrade(folder) {
+  confirmPanel(`确定升级项目 ${folder}？\n\n将拉取最新镜像并重建容器（docker compose pull + up -d）。\n数据卷不受影响，需要几分钟。`, async () => {
+    try {
+      const d = await api("POST", "/api/docker/compose/upgrade", { folder });
+      toast(d.msg || "升级完成", d.ok ? "okk" : "err");
+      loadComposeList();
+    } catch (e) { toast(e.message, "err"); }
+  }, "升级 Compose 项目");
 }
 
 function composeDown(folder) {
