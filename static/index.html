@@ -183,7 +183,7 @@ tr:hover td { background: #1d2733; }
       <h2>🌐 反向代理（Nginx）</h2>
       <div id="proxy_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
       <div class="form-row" id="px_install_row" style="display:none">
-        <button class="btn" onclick="installNginx()">⚙️ 一键安装 Nginx + certbot</button>
+        <button class="btn" id="btn_install_nginx" onclick="installNginx()">⚙️ 一键安装 Nginx + certbot</button>
         <span style="color:var(--muted);font-size:12px;align-self:center">自动按系统选择 apt / pacman / dnf，安装后自动写入 nginx 配置（需几分钟，期间页面等待属正常）</span>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
@@ -244,8 +244,8 @@ tr:hover td { background: #1d2733; }
       <div id="docker_install_area" style="display:none;margin-bottom:10px">
         <div class="form-row">
           <span style="color:var(--muted);font-size:12px">Docker 未安装，选择安装方式（自动识别 apt / pacman / dnf）：</span>
-          <button class="btn" onclick="installDocker('official')">🌐 国外直连安装</button>
-          <button class="btn" onclick="installDocker('china')">🇨🇳 国内镜像安装</button>
+          <button class="btn" id="btn_dk_install_official" onclick="installDocker('official')">🌐 国外直连安装</button>
+          <button class="btn" id="btn_dk_install_china" onclick="installDocker('china')">🇨🇳 国内镜像安装</button>
         </div>
         <div style="color:var(--muted);font-size:12px;margin-top:6px">国内镜像安装：Debian/Ubuntu 使用阿里云 docker-ce 源（docker-ce 全家桶），适合国内服务器官方源连接慢的场景</div>
       </div>
@@ -883,7 +883,8 @@ async function loadProxy() {
 }
 async function installNginx() {
   confirmPanel("确认一键安装 Nginx 和 certbot？\n\n将自动：检测系统包管理器（apt/pacman/dnf）→ 安装缺失组件 → 启动 nginx → 写入默认配置与已有代理配置。\n可能需要几分钟，期间请勿关闭页面。", () => {
-    const btn = event.target; const old = btn.textContent;
+    // ⚠ 不能用 event.target：回调在确认弹窗确定按钮点击后执行，target 是确定按钮（v1.24.6 修复）
+    const btn = $("btn_install_nginx"); const old = btn.textContent;
     btn.disabled = true; btn.textContent = "安装中...（几分钟）";
     api("POST", "/api/proxy/install", {}).then(d => {
       toast(d.msg || "安装完成", "okk"); loadProxy();
@@ -1736,8 +1737,11 @@ function renderDockerStats() {
 
 function installDocker(source) {
   const label = source === "china" ? "国内镜像" : "国外直连";
+  // ⚠ 不能用 event.target：回调在确认弹窗确定按钮点击后执行，target 会变成确定按钮（cfm_ok_btn），
+  // 导致把全局确认弹窗的确定按钮文字改掉（用户实测：升级确认按钮变成"国外直连安装"）
+  const btnId = source === "china" ? "btn_dk_install_china" : "btn_dk_install_official";
   confirmPanel(`确定一键安装 Docker（${label}）？\n\n${source === "china" ? "将配置阿里云 docker-ce 镜像源并安装 docker-ce 全家桶" : "将使用发行版官方源安装 Docker"}，安装后自动启动服务（需几分钟）。`, async () => {
-    const btn = event.target;
+    const btn = $(btnId);
     btn.disabled = true; btn.textContent = "安装中...（几分钟）";
     try {
       const d = await api("POST", "/api/docker/install", { source });
