@@ -1850,6 +1850,67 @@ class TestDocker(unittest.TestCase):
             for name, fn in saved.items():
                 setattr(panel, name, fn)
 
+    def test_docker_install_official_apt_fallback(self):
+        """apt 官方源：docker-compose-v2 不存在时回退 docker-compose（v1）"""
+        import types
+        real_run = panel.subprocess.run
+        real_mgr = panel.pkg_mgr
+        real_dry = panel.DRY_RUN
+        calls = []
+
+        def fake_run(args, **kw):
+            calls.append(args)
+            # apt-get update 成功；install v2 失败（找不到包）；install v1 成功
+            if args[0] == "apt-get" and args[1] == "update":
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            if "docker-compose-v2" in args:
+                return types.SimpleNamespace(
+                    returncode=100, stdout="",
+                    stderr="E: Unable to locate package docker-compose-v2")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        try:
+            panel.pkg_mgr = lambda: "apt"
+            panel.DRY_RUN = False
+            panel.subprocess.run = fake_run
+            ok, msg = panel.install_docker_pkgs("official")
+            self.assertTrue(ok)
+            # 断言第二次 install 用了 docker-compose（v1 回退）
+            self.assertTrue(any("docker-compose" in a and "docker-compose-v2" not in a
+                                for a in calls))
+        finally:
+            panel.subprocess.run = real_run
+            panel.pkg_mgr = real_mgr
+            panel.DRY_RUN = real_dry
+
+    def test_docker_install_official_apt_both_fail(self):
+        """apt 官方源：v2 和 v1 都失败 → 返回失败"""
+        import types
+        real_run = panel.subprocess.run
+        real_mgr = panel.pkg_mgr
+        real_dry = panel.DRY_RUN
+        calls = []
+
+        def fake_run(args, **kw):
+            calls.append(args)
+            if args[0] == "apt-get" and args[1] == "update":
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            return types.SimpleNamespace(
+                returncode=100, stdout="",
+                stderr="E: Unable to locate package docker-compose")
+
+        try:
+            panel.pkg_mgr = lambda: "apt"
+            panel.DRY_RUN = False
+            panel.subprocess.run = fake_run
+            ok, msg = panel.install_docker_pkgs("official")
+            self.assertFalse(ok)
+            self.assertIn("安装失败", msg)
+        finally:
+            panel.subprocess.run = real_run
+            panel.pkg_mgr = real_mgr
+            panel.DRY_RUN = real_dry
+
     def test_docker_action_valid(self):
         tok = self._token()
         saved = self._patch_docker(docker_action=lambda act, cid: (True, "ok"))

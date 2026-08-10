@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.4"
+CURRENT_VERSION = "1.24.5"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1266,8 +1266,13 @@ def install_docker_pkgs(source="official"):
                 r = subprocess.run(["apt-get", "update"], capture_output=True, text=True, timeout=300)
                 if r.returncode != 0:
                     return False, f"apt-get update 失败: {(r.stderr or r.stdout).strip()[:200]}"
-                r = subprocess.run(["apt-get", "install", "-y", "docker.io", "docker-compose-plugin"],
+                # 官方源没有 docker-compose-plugin（那是 docker-ce 仓库的包名）：
+                # 先试 docker-compose-v2（Debian 12+/Ubuntu 22.10+），失败回退 docker-compose（老版 v1）
+                r = subprocess.run(["apt-get", "install", "-y", "docker.io", "docker-compose-v2"],
                                    capture_output=True, text=True, timeout=600)
+                if r.returncode != 0:
+                    r = subprocess.run(["apt-get", "install", "-y", "docker.io", "docker-compose"],
+                                       capture_output=True, text=True, timeout=600)
         elif mgr == "pacman":
             r = subprocess.run(["pacman", "-Sy", "--noconfirm", "docker", "docker-compose"],
                                capture_output=True, text=True, timeout=600)
@@ -1280,8 +1285,12 @@ def install_docker_pkgs(source="official"):
                                     "containerd.io", "docker-compose-plugin"],
                                    capture_output=True, text=True, timeout=600)
             else:
-                r = subprocess.run(["dnf", "install", "-y", "docker", "docker-compose-plugin"],
+                # Fedora/RHEL 官方源同样没有 docker-compose-plugin：先试 v2，失败回退 v1
+                r = subprocess.run(["dnf", "install", "-y", "docker", "docker-compose-v2"],
                                    capture_output=True, text=True, timeout=600)
+                if r.returncode != 0:
+                    r = subprocess.run(["dnf", "install", "-y", "docker", "docker-compose"],
+                                       capture_output=True, text=True, timeout=600)
         else:
             return False, f"不支持的包管理器: {mgr}"
     except subprocess.TimeoutExpired:
