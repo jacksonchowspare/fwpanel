@@ -2097,6 +2097,74 @@ class TestDocker(unittest.TestCase):
             panel.pkg_mgr = real_mgr
             panel.DRY_RUN = real_dry
 
+    def test_compose_file_saved_to_dockerdata(self):
+        """compose up 必须把文件保存到 /DockerData/compose（用户要求），不落 /etc/fwpanel"""
+        import types
+        real_run = panel.subprocess.run
+        real_compose = panel.COMPOSE_FILE
+        real_legacy = panel.COMPOSE_FILE_LEGACY
+        real_dry = panel.DRY_RUN
+        real_makedirs = os.makedirs
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-compose-test-")
+            panel.COMPOSE_FILE = os.path.join(tmp, "compose", "docker-compose.yml")
+            panel.COMPOSE_FILE_LEGACY = os.path.join(tmp, "etc-fwpanel", "docker-compose.yml")
+            panel.DRY_RUN = False
+            os.makedirs = lambda p, exist_ok=False: real_makedirs(p, exist_ok=True)
+
+            def fake_run(args, **kw):
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            panel.subprocess.run = fake_run
+            ok, msg = panel.docker_compose_up("services:\n  web:\n    image: nginx\n")
+            self.assertTrue(ok)
+            # 文件必须落在 compose 子目录
+            self.assertTrue(os.path.exists(panel.COMPOSE_FILE))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "etc-fwpanel")))
+            self.assertIn("compose", msg)
+        finally:
+            panel.subprocess.run = real_run
+            panel.COMPOSE_FILE = real_compose
+            panel.COMPOSE_FILE_LEGACY = real_legacy
+            panel.DRY_RUN = real_dry
+            os.makedirs = real_makedirs
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_compose_legacy_migrated(self):
+        """旧路径（/etc/fwpanel）已有文件时，up 自动迁移到新路径"""
+        import types
+        real_run = panel.subprocess.run
+        real_compose = panel.COMPOSE_FILE
+        real_legacy = panel.COMPOSE_FILE_LEGACY
+        real_dry = panel.DRY_RUN
+        real_makedirs = os.makedirs
+        try:
+            tmp = tempfile.mkdtemp(prefix="fw-compose-legacy-")
+            panel.COMPOSE_FILE = os.path.join(tmp, "compose", "docker-compose.yml")
+            legacy_dir = os.path.join(tmp, "etc-fwpanel")
+            os.makedirs(legacy_dir, exist_ok=True)
+            panel.COMPOSE_FILE_LEGACY = os.path.join(legacy_dir, "docker-compose.yml")
+            with open(panel.COMPOSE_FILE_LEGACY, "w") as f:
+                f.write("legacy content")
+            panel.DRY_RUN = False
+            os.makedirs = lambda p, exist_ok=False: real_makedirs(p, exist_ok=True)
+
+            def fake_run(args, **kw):
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            panel.subprocess.run = fake_run
+            ok, _ = panel.docker_compose_up("services:\n  web:\n    image: nginx\n")
+            self.assertTrue(ok)
+            # 新文件已存在（up 写入内容覆盖迁移的旧内容，文件必须在新路径）
+            self.assertTrue(os.path.exists(panel.COMPOSE_FILE))
+        finally:
+            panel.subprocess.run = real_run
+            panel.COMPOSE_FILE = real_compose
+            panel.COMPOSE_FILE_LEGACY = real_legacy
+            panel.DRY_RUN = real_dry
+            os.makedirs = real_makedirs
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_docker_logs(self):
         tok = self._token()
         saved = self._patch_docker(docker_logs=lambda cid, tail=200: "log line 1")

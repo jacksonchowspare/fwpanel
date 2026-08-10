@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.7"
+CURRENT_VERSION = "1.24.8"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1589,16 +1589,25 @@ def docker_create(name, image, ports="", envs=""):
     return True, f"容器 {name} 创建成功"
 
 
-COMPOSE_FILE = os.environ.get("FW_COMPOSE_FILE", "/etc/fwpanel/docker-compose.yml")
+# Compose 文件路径（优先 /DockerData/compose，与「一键创建存储目录」保持一致；
+# 兼容旧版本保存到 /etc/fwpanel 的路径，env 可覆盖便于测试）
+COMPOSE_FILE = os.environ.get("FW_COMPOSE_FILE", "/DockerData/compose/docker-compose.yml")
+COMPOSE_FILE_LEGACY = "/etc/fwpanel/docker-compose.yml"
 
 
 def docker_compose_up(content):
-    """保存 docker-compose.yml 到 /etc/fwpanel 并启动"""
+    """保存 docker-compose.yml 到 /DockerData/compose 并启动（兼容旧路径自动迁移）"""
     if DRY_RUN:
         return True, "DRY_RUN: compose up"
     try:
         d = os.path.dirname(COMPOSE_FILE)
         os.makedirs(d, exist_ok=True)
+        # 旧路径存在且新路径不存在 → 迁移（保留旧数据目录一致）
+        if os.path.exists(COMPOSE_FILE_LEGACY) and not os.path.exists(COMPOSE_FILE):
+            try:
+                shutil.copy2(COMPOSE_FILE_LEGACY, COMPOSE_FILE)
+            except Exception:
+                pass
         with open(COMPOSE_FILE, "w") as f:
             f.write(content)
         r = subprocess.run(["docker", "compose", "-f", COMPOSE_FILE,
@@ -1608,17 +1617,19 @@ def docker_compose_up(content):
             return False, (r.stderr or r.stdout).strip()[:400]
     except Exception as e:
         return False, f"Compose 启动失败: {e}"
-    return True, "Compose 启动成功"
+    return True, f"Compose 启动成功（已保存到 {COMPOSE_FILE}）"
 
 
 def docker_compose_down():
-    """停止并移除 compose 服务（读取已保存的 yml）"""
+    """停止并移除 compose 服务（读取已保存的 yml，兼容新旧路径）"""
     if DRY_RUN:
         return True, "DRY_RUN: compose down"
-    if not os.path.exists(COMPOSE_FILE):
+    target = COMPOSE_FILE if os.path.exists(COMPOSE_FILE) else (
+        COMPOSE_FILE_LEGACY if os.path.exists(COMPOSE_FILE_LEGACY) else "")
+    if not target:
         return False, "尚未保存 docker-compose.yml，请先执行「Compose 启动」"
     try:
-        r = subprocess.run(["docker", "compose", "-f", COMPOSE_FILE, "down"],
+        r = subprocess.run(["docker", "compose", "-f", target, "down"],
                            capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             return False, (r.stderr or r.stdout).strip()[:400]
