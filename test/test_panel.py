@@ -1942,6 +1942,57 @@ class TestDocker(unittest.TestCase):
             for name, fn in saved.items():
                 setattr(panel, name, fn)
 
+    def test_docker_dirs_create(self):
+        """一键创建目录：mock create_docker_dirs 返回成功"""
+        tok = self._token()
+        saved = self._patch_docker(create_docker_dirs=lambda: (True, "ok"))
+        try:
+            code, d = self._req("POST", "/api/docker/dirs", {}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_dirs_status(self):
+        """目录状态 API 返回结构（mock 已存在）"""
+        tok = self._token()
+        saved = self._patch_docker(
+            create_docker_dirs=lambda: (True, "ok"))
+        # mock os.path.isdir 和 DOCKER_DATA_DIRS 用真实值
+        real_isdir = os.path.isdir
+        try:
+            os.path.isdir = lambda p: p.startswith("/DockerData")
+            code, d = self._req("GET", "/api/docker/dirs", token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["exists"])
+            self.assertEqual(d["base"], "/DockerData")
+            self.assertEqual(d["total"], len(panel.DOCKER_DATA_DIRS))
+        finally:
+            os.path.isdir = real_isdir
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_create_docker_dirs_idempotent(self):
+        """重复创建不报错（exist_ok）"""
+        real_makedirs = os.makedirs
+        real_base = panel.DOCKER_DATA_BASE
+        try:
+            panel.DOCKER_DATA_BASE = tempfile.mkdtemp(prefix="fw-dockerdata-")
+            panel.DRY_RUN = False
+            calls = []
+            os.makedirs = lambda p, exist_ok=False: calls.append(p)
+            ok, msg = panel.create_docker_dirs()
+            self.assertTrue(ok)
+            self.assertIn("已创建", msg)
+            # 第二次调用（已存在）也应成功
+            ok2, _ = panel.create_docker_dirs()
+            self.assertTrue(ok2)
+        finally:
+            os.makedirs = real_makedirs
+            panel.DOCKER_DATA_BASE = real_base
+            panel.DRY_RUN = True
+
     def test_docker_logs(self):
         tok = self._token()
         saved = self._patch_docker(docker_logs=lambda cid, tail=200: "log line 1")

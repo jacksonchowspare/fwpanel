@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.1"
+CURRENT_VERSION = "1.24.2"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1562,6 +1562,34 @@ def docker_compose_down():
     return True, "Compose 已停止"
 
 
+# Docker 数据目录基础路径（/DockerData，env 可覆盖便于测试）
+DOCKER_DATA_BASE = os.environ.get("FW_DOCKER_DATA", "/DockerData")
+# 一键创建的常用 Docker 数据目录（挂载卷直接用 -v /DockerData/<名>:<容器路径>）
+DOCKER_DATA_DIRS = [
+    "mysql", "redis", "nginx", "postgres", "mongo", "rabbitmq",
+    "elasticsearch", "kafka", "portainer", "gitea", "jellyfin",
+    "data", "backup", "logs", "compose",
+]
+
+
+def create_docker_dirs():
+    """在根目录创建 /DockerData 及常用 Docker 数据子目录（幂等，已存在不报错）"""
+    if DRY_RUN:
+        return True, f"DRY_RUN: 创建目录（{DOCKER_DATA_BASE} + {len(DOCKER_DATA_DIRS)} 个子目录）"
+    created = []
+    try:
+        base = DOCKER_DATA_BASE
+        os.makedirs(base, exist_ok=True)
+        created.append(base)
+        for sub in DOCKER_DATA_DIRS:
+            d = os.path.join(base, sub)
+            os.makedirs(d, exist_ok=True)
+            created.append(d)
+    except Exception as e:
+        return False, f"创建目录失败: {e}"
+    return True, f"已创建 {len(created)} 个目录：{DOCKER_DATA_BASE}（含 {len(DOCKER_DATA_DIRS)} 个常用子目录）"
+
+
 def nginx_supports_reject_handshake():
     """nginx >= 1.19.4 支持 ssl_reject_handshake（未匹配 SNI 直接拒绝 TLS 握手）"""
     try:
@@ -1869,6 +1897,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_docker_images()
         elif path == "/api/docker/stats":
             self._api_docker_stats()
+        elif path == "/api/docker/dirs":
+            self._api_docker_dirs_status()
         elif path.startswith("/api/docker/logs/"):
             self._api_docker_logs(path[len("/api/docker/logs/"):])
         elif path == "/api/rules":
@@ -1952,6 +1982,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_docker_compose_up()
         elif path == "/api/docker/compose/down":
             self._api_docker_compose_down()
+        elif path == "/api/docker/dirs":
+            self._api_docker_dirs_create()
         else:
             self._send(404, {"error": "Not Found"})
 
@@ -2355,6 +2387,30 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         ok, msg = docker_compose_down()
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_dirs_create(self):
+        """POST /api/docker/dirs → 一键创建 /DockerData 及常用子目录"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = create_docker_dirs()
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_dirs_status(self):
+        """GET /api/docker/dirs → 目录创建状态（是否存在/子目录数）"""
+        token = self._require_auth()
+        if token is None:
+            return
+        base = DOCKER_DATA_BASE
+        exists = os.path.isdir(base)
+        sub_count = 0
+        if exists:
+            try:
+                sub_count = sum(1 for d in DOCKER_DATA_DIRS if os.path.isdir(os.path.join(base, d)))
+            except Exception:
+                pass
+        self._send(200, {"exists": exists, "base": base,
+                         "sub_dirs": sub_count, "total": len(DOCKER_DATA_DIRS)})
 
     def _api_bruteforce_ban(self):
         """手动封禁 IP：{ip} → 添加拒绝规则 + 写入封禁记录（使用配置的封禁时长）"""
