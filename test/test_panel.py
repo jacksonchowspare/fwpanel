@@ -2165,6 +2165,38 @@ class TestDocker(unittest.TestCase):
             os.makedirs = real_makedirs
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_docker_images_in_use_flag(self):
+        """docker_images 必须带 in_use 标记（使用中的镜像删除按钮禁用）"""
+        tok = self._token()
+        saved = self._patch_docker(
+            docker_images=lambda: [
+                {"id": "abc123", "repository": "nginx", "tag": "latest",
+                 "size": "100MB", "in_use": True},
+                {"id": "def456", "repository": "busybox", "tag": "latest",
+                 "size": "5MB", "in_use": False},
+            ])
+        try:
+            code, d = self._req("GET", "/api/docker/images", token=tok)
+            self.assertEqual(code, 200)
+            self.assertEqual(len(d["images"]), 2)
+            self.assertTrue(d["images"][0]["in_use"])
+            self.assertFalse(d["images"][1]["in_use"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
+    def test_docker_prune_api(self):
+        """清理未使用镜像 API"""
+        tok = self._token()
+        saved = self._patch_docker(docker_image_prune=lambda: (True, "ok"))
+        try:
+            code, d = self._req("POST", "/api/docker/prune", {}, token=tok)
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+        finally:
+            for name, fn in saved.items():
+                setattr(panel, name, fn)
+
     def test_docker_logs(self):
         tok = self._token()
         saved = self._patch_docker(docker_logs=lambda cid, tail=200: "log line 1")

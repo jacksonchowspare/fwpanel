@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.8"
+CURRENT_VERSION = "1.24.9"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1453,7 +1453,8 @@ def _setup_aliyun_docker_dnf():
 
 
 def docker_images():
-    """镜像列表（docker images --format json）"""
+    """镜像列表（docker images --format json），带 in_use 标记：
+    对比 docker ps -a 所有容器（含停止）引用的镜像 ID，被引用 = 使用中"""
     if not docker_available():
         return []
     try:
@@ -1462,15 +1463,49 @@ def docker_images():
                            capture_output=True, text=True, timeout=20)
         if r.returncode != 0:
             return []
+        # 使用中的镜像 ID 集合（docker ps -aq 拿容器 ID → inspect 拿镜像 ID，兼容短 ID 前缀）
+        used_ids = set()
+        try:
+            rp = subprocess.run(["docker", "ps", "-aq"], capture_output=True, text=True, timeout=15)
+            if rp.returncode == 0:
+                cids = [x.strip() for x in rp.stdout.splitlines() if x.strip()]
+                if cids:
+                    ri = subprocess.run(["docker", "inspect", "--format", "{{.Image}}"] + cids,
+                                        capture_output=True, text=True, timeout=20)
+                    if ri.returncode == 0:
+                        for img in ri.stdout.splitlines():
+                            img = img.strip()
+                            if img:
+                                used_ids.add(img[:12])
+        except Exception:
+            pass
         out = []
         for line in r.stdout.splitlines():
             p = line.split("\t")
             if len(p) >= 4:
-                out.append({"id": p[0][:12], "repository": p[1],
-                            "tag": p[2], "size": p[3]})
+                iid = p[0][:12]
+                out.append({"id": iid, "repository": p[1],
+                            "tag": p[2], "size": p[3],
+                            "in_use": iid in used_ids})
         return out
     except Exception:
         return []
+
+
+def docker_image_prune():
+    """清理全部未使用镜像（docker image prune -f，悬空+未引用）"""
+    if DRY_RUN:
+        return True, "DRY_RUN: image prune"
+    try:
+        r = subprocess.run(["docker", "image", "prune", "-f"],
+                           capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return False, "清理超时（5 分钟）"
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip()[:300]
+    # 提取清理摘要（Total reclaimed space）
+    msg = (r.stdout or r.stderr or "").strip()
+    return True, f"未使用镜像已清理{'：' + msg if msg else ''}"
 
 
 def docker_containers(all_=True):
@@ -2056,6 +2091,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_docker_pull()
         elif path == "/api/docker/rmi":
             self._api_docker_rmi()
+        elif path == "/api/docker/prune":
+            self._api_docker_prune()
         elif path == "/api/docker/compose/up":
             self._api_docker_compose_up()
         elif path == "/api/docker/compose/down":
@@ -2451,6 +2488,14 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "缺少镜像 ID"})
             return
         ok, msg = docker_rmi(image_id)
+        self._send(200 if ok else 500, {"ok": ok, "msg": msg})
+
+    def _api_docker_prune(self):
+        """POST /api/docker/prune → 清理全部未使用镜像"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = docker_image_prune()
         self._send(200 if ok else 500, {"ok": ok, "msg": msg})
 
     def _api_docker_compose_up(self):

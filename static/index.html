@@ -284,9 +284,13 @@ tr:hover td { background: #1d2733; }
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>仓库</th><th>标签</th><th>大小</th><th>ID</th><th>操作</th></tr></thead>
-        <tbody id="dk_img_rows"><tr><td colspan="5" style="color:var(--muted)">未安装 Docker 或暂无镜像</td></tr></tbody>
+        <thead><tr><th>仓库</th><th>标签</th><th>大小</th><th>ID</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="dk_img_rows"><tr><td colspan="6" style="color:var(--muted)">未安装 Docker 或暂无镜像</td></tr></tbody>
       </table>
+      </div>
+      <div class="form-row" style="margin-bottom:8px;margin-top:8px">
+        <span style="color:var(--muted);font-size:12px" id="dk_img_hint">🟢 使用中 = 被容器（含停止的）引用 · ⚪ 未使用 = 可安全删除</span>
+        <button class="btn ghost" onclick="pruneDockerImages()">🧹 清理未使用镜像</button>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">🗂 存储目录</div>
@@ -1622,15 +1626,30 @@ async function dkLogs(id) {
 function renderDockerImages() {
   const tb = $("dk_img_rows");
   if (!dkImages.length) {
-    tb.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无镜像</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">暂无镜像</td></tr>';
     return;
   }
   tb.innerHTML = dkImages.map(im => `
     <tr>
       <td>${im.repository}</td><td>${im.tag}</td><td>${im.size}</td>
       <td style="font-size:12px;color:var(--muted)">${im.id}</td>
-      <td><button class="btn mini danger" onclick="dkRmi('${im.id}')">删除</button></td>
+      <td><span class="v ${im.in_use ? "ok" : "off"}">${im.in_use ? "🟢 使用中" : "⚪ 未使用"}</span></td>
+      <td>
+        ${im.in_use
+          ? '<span style="color:var(--muted);font-size:12px" title="被容器引用，先删除容器才能删镜像">使用中</span>'
+          : '<button class="btn mini danger" onclick="dkRmi(\'' + im.id + '\')">删除</button>'}
+      </td>
     </tr>`).join("");
+}
+
+function pruneDockerImages() {
+  confirmPanel("确定清理所有未使用镜像？\n\n将删除未被任何容器（含已停止的）引用的镜像，释放磁盘空间。\n使用中的镜像不受影响。", async () => {
+    try {
+      const d = await api("POST", "/api/docker/prune", {});
+      toast(d.msg || "清理完成", d.ok ? "okk" : "err");
+      loadDocker();
+    } catch (e) { toast(e.message, "err"); }
+  }, "清理未使用镜像");
 }
 
 function dkRmi(id) {
