@@ -130,6 +130,16 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 td .btn.mini + .btn.mini { margin-left: 6px; }
 .btn:disabled { opacity: .4; cursor: not-allowed; transform: none !important; box-shadow: none !important; filter: none !important; }
 input, select, textarea { background: #0d1218; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
+/* 日期选择框美化（原生 date input 深色主题适配） */
+input[type="date"] { position: relative; padding: 5px 30px 5px 10px; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  background: none; width: 15px; height: 15px; border-radius: 4px;
+  filter: invert(.72); opacity: .75; cursor: pointer;
+  transition: opacity .15s ease, transform .15s ease;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; transform: scale(1.18); filter: invert(.9); }
+input[type="date"]:hover { border-color: rgba(255,255,255,.22); }
+input[type="date"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(61,139,253,.18); }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 input::placeholder, textarea::placeholder { color: #5c6b7e; }
 .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
