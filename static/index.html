@@ -235,7 +235,7 @@ tr:hover td { background: #1d2733; }
         <span style="color:var(--muted);font-size:12px">网卡</span>
         <select id="tr_iface" style="width:auto;min-width:90px" onchange="trSwitchIface()"></select>
         <span id="tr_rate" style="color:var(--muted);font-size:12px">实时：↑ - ↓ -</span>
-        <span style="color:var(--muted);font-size:12px">🗓 自定义日期</span>
+        <span style="color:var(--muted);font-size:12px;margin-left:24px">🗓 自定义日期</span>
         <input type="date" id="tr_from" style="width:auto">
         <span style="color:var(--muted);font-size:12px">至</span>
         <input type="date" id="tr_to" style="width:auto">
@@ -897,15 +897,14 @@ async function loadTraffic() {
     const d = await api("GET", "/api/traffic" + q);
     trCurrent = d.current || d.primary || trCurrent;
     const sel = $("tr_iface");
-    const prev = sel.value;
     sel.innerHTML = "";
     (d.ifaces && d.ifaces.length ? d.ifaces : [d.primary]).forEach(n => {
       const op = document.createElement("option");
       op.value = n; op.textContent = n;
       sel.appendChild(op);
     });
-    if (prev) sel.value = prev;
-    const cur = sel.value || d.primary || "";
+    sel.value = trCurrent; // 默认选中后端自动判定的当前流量网卡（用户手动切换过则保持）
+    const cur = sel.value || trCurrent || "";
     const r = (d.rates && d.rates[cur]) || {};
     $("tr_rate").textContent = "实时：↑ " + fmtSpeed(r.tx_bps) + " ↓ " + fmtSpeed(r.rx_bps);
     $("tr_today").textContent = "↑ " + fmtBytes(d.today.rx) + " ↓ " + fmtBytes(d.today.tx);

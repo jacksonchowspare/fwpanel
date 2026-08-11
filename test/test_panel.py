@@ -2599,6 +2599,19 @@ class TestTraffic(unittest.TestCase):
         self.assertEqual(week[-2]["rx"], 30)      # 昨天
         self.assertEqual(week[0]["rx"], 0)        # 更早的天补 0
 
+    def test_traffic_active_iface(self):
+        """自动选网卡：速率非零 > 今日有流量 > 主网卡兜底"""
+        ts = panel.TrafficStore(os.path.join(self.tmp, "t-active.json"))
+        ts._rates = {"eth1": {"rx_bps": 100, "tx_bps": 0},
+                     "eth0": {"rx_bps": 0, "tx_bps": 0}}
+        self.assertEqual(panel.traffic_active_iface(ts), "eth1")
+        ts._rates = {"eth0": {"rx_bps": 0, "tx_bps": 0}}
+        today = panel.datetime.date.today().isoformat()
+        ts.data["days"] = {today: {"eth2": {"rx": 1, "tx": 0}}}
+        self.assertEqual(panel.traffic_active_iface(ts), "eth2")
+        ts.data["days"] = {}
+        self.assertEqual(panel.traffic_active_iface(ts), panel.primary_iface())
+
     def test_traffic_api(self):
         """/api/traffic：today/yesterday/week/total/rates + 自定义起始日期 + 非法日期 400"""
         ts = self.traffic

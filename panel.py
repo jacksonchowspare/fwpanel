@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.34"
+CURRENT_VERSION = "1.24.35"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -992,6 +992,22 @@ class TrafficStore:
             ifaces.update(day.keys())
         ifaces.update(self._rates.keys())
         return sorted(ifaces)
+
+
+def traffic_active_iface(store):
+    """自动选择当前有流量的网卡：最近采样速率非零 > 今日有流量记录 > 主网卡兜底"""
+    # 1. 最近采样速率非零（正在跑流量）
+    for name, r in sorted(store._rates.items()):
+        if r.get("rx_bps", 0) > 0 or r.get("tx_bps", 0) > 0:
+            return name
+    # 2. 今日有流量记录
+    today = datetime.date.today().isoformat()
+    day = store.data.get("days", {}).get(today, {})
+    for name, slot in sorted(day.items()):
+        if slot.get("rx", 0) > 0 or slot.get("tx", 0) > 0:
+            return name
+    # 3. 主网卡兜底
+    return primary_iface()
 
 
 def traffic_loop(store, interval=TRAFFIC_INTERVAL):
@@ -3045,7 +3061,9 @@ class PanelHandler(BaseHTTPRequestHandler):
             pass
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
-        iface = (qs.get("iface") or [""])[0].strip() or primary_iface()
+        iface = (qs.get("iface") or [""])[0].strip()
+        if not iface:
+            iface = traffic_active_iface(traffic)  # 默认选中当前有流量的网卡
         from_date = (qs.get("from") or [""])[0].strip()
         to_date = (qs.get("to") or [""])[0].strip()
         for name, val in (("开始日期", from_date), ("结束日期", to_date)):
