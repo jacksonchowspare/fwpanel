@@ -2631,8 +2631,23 @@ class TestTraffic(unittest.TestCase):
             self.assertEqual(d["custom"]["tx"], 2700)
             self.assertEqual(d["custom"]["days"], 2)
             self.assertEqual(d["custom"]["from"], yest)
+            # 自定义起止日期：昨天至昨天 → 只算昨天一天
+            code, d = self._req("GET", "/api/traffic?iface=eth0&from=" + yest + "&to=" + yest,
+                                token=self._token())
+            self.assertEqual(code, 200, d)
+            self.assertEqual(d["custom"]["rx"], 500)
+            self.assertEqual(d["custom"]["tx"], 700)
+            self.assertEqual(d["custom"]["days"], 1)
+            self.assertEqual(d["custom"]["to"], yest)
+            # 结束日期早于开始日期 → 400
+            code, d = self._req("GET", "/api/traffic?from=" + today + "&to=" + yest,
+                                token=self._token())
+            self.assertEqual(code, 400)
             # 非法日期 → 400
             code, d = self._req("GET", "/api/traffic?from=2026-13-99", token=self._token())
+            self.assertEqual(code, 400)
+            code, d = self._req("GET", "/api/traffic?from=" + yest + "&to=2026-13-99",
+                                token=self._token())
             self.assertEqual(code, 400)
         finally:
             panel.read_net_dev = saved

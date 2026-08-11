@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.33"
+CURRENT_VERSION = "1.24.34"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -3031,8 +3031,8 @@ class PanelHandler(BaseHTTPRequestHandler):
                          "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
 
     def _api_traffic(self):
-        """网卡流量统计：GET /api/traffic?iface=eth0&from=YYYY-MM-DD
-        返回 网卡列表/实时速率/今日/昨日/近7天/总累计/自定义起始日期累计"""
+        """网卡流量统计：GET /api/traffic?iface=eth0&from=YYYY-MM-DD&to=YYYY-MM-DD
+        返回 网卡列表/实时速率/今日/昨日/近7天/总累计/自定义日期范围累计"""
         token = self._require_auth()
         if token is None:
             return
@@ -3047,12 +3047,17 @@ class PanelHandler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
         iface = (qs.get("iface") or [""])[0].strip() or primary_iface()
         from_date = (qs.get("from") or [""])[0].strip()
-        if from_date:
-            try:
-                datetime.date.fromisoformat(from_date)
-            except ValueError:
-                self._send(400, {"error": "日期格式应为 YYYY-MM-DD"})
-                return
+        to_date = (qs.get("to") or [""])[0].strip()
+        for name, val in (("开始日期", from_date), ("结束日期", to_date)):
+            if val:
+                try:
+                    datetime.date.fromisoformat(val)
+                except ValueError:
+                    self._send(400, {"error": f"{name}格式应为 YYYY-MM-DD"})
+                    return
+        if from_date and to_date and to_date < from_date:
+            self._send(400, {"error": "结束日期不能早于开始日期"})
+            return
         today = datetime.date.today().isoformat()
         yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
         resp = {
@@ -3067,12 +3072,14 @@ class PanelHandler(BaseHTTPRequestHandler):
             "since": traffic.data.get("since"),
         }
         if from_date:
+            end = to_date or today
             d0 = datetime.date.fromisoformat(from_date)
-            d1 = datetime.date.today()
+            d1 = datetime.date.fromisoformat(end)
             resp["custom"] = {
-                "rx": traffic.totals_for(iface, start=from_date)["rx"],
-                "tx": traffic.totals_for(iface, start=from_date)["tx"],
+                "rx": traffic.totals_for(iface, start=from_date, end=end)["rx"],
+                "tx": traffic.totals_for(iface, start=from_date, end=end)["tx"],
                 "from": from_date,
+                "to": end,
                 "days": max(0, (d1 - d0).days + 1),
             }
         self._send(200, resp)

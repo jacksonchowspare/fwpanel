@@ -235,10 +235,12 @@ tr:hover td { background: #1d2733; }
         <span style="color:var(--muted);font-size:12px">网卡</span>
         <select id="tr_iface" style="width:auto;min-width:90px" onchange="trSwitchIface()"></select>
         <span id="tr_rate" style="color:var(--muted);font-size:12px">实时：↑ - ↓ -</span>
-        <span style="color:var(--muted);font-size:12px">🗓 自定义起始日期</span>
+        <span style="color:var(--muted);font-size:12px">🗓 自定义日期</span>
         <input type="date" id="tr_from" style="width:auto">
+        <span style="color:var(--muted);font-size:12px">至</span>
+        <input type="date" id="tr_to" style="width:auto">
         <button class="btn mini" onclick="trQuery()">查询</button>
-        <span id="tr_custom" style="color:var(--muted);font-size:12px">选择起始日期后查询累计上下行流量</span>
+        <span id="tr_custom" style="color:var(--muted);font-size:12px">选择起止日期后查询区间累计上下行流量</span>
       </div>
       <div style="border-top:1px dashed var(--border);margin-bottom:12px"></div>
       <div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:12px">
@@ -922,7 +924,9 @@ async function loadTraffic() {
     $("tr_total").textContent = "自 " + (d.since || "—") + " 起：↑ " + fmtBytes(d.total.rx)
       + " ↓ " + fmtBytes(d.total.tx) + "（合计 " + fmtBytes(d.total.rx + d.total.tx) + "）";
     if (d.custom) {
-      $("tr_custom").textContent = "从 " + d.custom.from + " 起（" + d.custom.days + " 天）：↑ "
+      $("tr_custom").textContent = (d.custom.to && d.custom.to !== d.custom.from
+        ? "从 " + d.custom.from + " 至 " + d.custom.to + "（" + d.custom.days + " 天）：↑ "
+        : "从 " + d.custom.from + " 起（" + d.custom.days + " 天）：↑ ")
         + fmtBytes(d.custom.rx) + " ↓ " + fmtBytes(d.custom.tx)
         + "（合计 " + fmtBytes(d.custom.rx + d.custom.tx) + "）";
     }
@@ -935,16 +939,21 @@ function trSwitchIface() {
 }
 async function trQuery() {
   const v = $("tr_from").value;
-  if (!v) { $("tr_custom").textContent = "请先选择起始日期"; return; }
+  const v2 = $("tr_to").value;
+  if (!v) { $("tr_custom").textContent = "请先选择开始日期"; return; }
+  if (v2 && v2 < v) { $("tr_custom").textContent = "结束日期不能早于开始日期"; return; }
   try {
-    const q = "?from=" + v + (trCurrent ? "&iface=" + encodeURIComponent(trCurrent) : "");
+    let q = "?from=" + v + (v2 ? "&to=" + v2 : "") + (trCurrent ? "&iface=" + encodeURIComponent(trCurrent) : "");
     const d = await api("GET", "/api/traffic" + q);
     if (d.custom) {
-      $("tr_custom").textContent = "从 " + d.custom.from + " 起（" + d.custom.days + " 天）：↑ "
+      const range = (d.custom.to && d.custom.to !== d.custom.from)
+        ? "从 " + d.custom.from + " 至 " + d.custom.to
+        : "从 " + d.custom.from + " 起";
+      $("tr_custom").textContent = range + "（" + d.custom.days + " 天）：↑ "
         + fmtBytes(d.custom.rx) + " ↓ " + fmtBytes(d.custom.tx)
         + "（合计 " + fmtBytes(d.custom.rx + d.custom.tx) + "）";
     } else {
-      $("tr_custom").textContent = "该日期之后暂无记录";
+      $("tr_custom").textContent = "该日期范围暂无记录";
     }
   } catch (e) { toast(e.message, "err"); }
 }
