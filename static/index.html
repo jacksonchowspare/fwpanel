@@ -230,6 +230,43 @@ tr:hover td { background: #1d2733; }
     </div>
 
     <div class="panel">
+      <h2>📊 网卡流量统计</h2>
+      <div class="form-row" style="align-items:center;gap:8px;margin-bottom:10px">
+        <span style="color:var(--muted);font-size:12px">网卡</span>
+        <select id="tr_iface" style="width:auto;min-width:90px" onchange="trSwitchIface()"></select>
+        <span id="tr_rate" style="color:var(--muted);font-size:12px">实时：↑ - ↓ -</span>
+      </div>
+      <div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:12px">
+        <div>
+          <div style="color:var(--muted);font-size:12px">今日</div>
+          <div id="tr_today" style="font-size:15px;font-weight:600;margin-top:4px">↑ - ↓ -</div>
+        </div>
+        <div>
+          <div style="color:var(--muted);font-size:12px">昨日</div>
+          <div id="tr_yest" style="font-size:15px;font-weight:600;margin-top:4px">↑ - ↓ -</div>
+        </div>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin-bottom:12px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📅 每天上下行（近 7 天）</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期</th><th>上行</th><th>下行</th><th>合计</th></tr></thead>
+          <tbody id="tr_week"></tbody>
+        </table>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin:12px 0"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">🗓 自定义起始日期统计</div>
+      <div class="form-row" style="align-items:center;gap:8px">
+        <input type="date" id="tr_from" style="width:auto">
+        <button class="btn mini" onclick="trQuery()">查询</button>
+        <span id="tr_custom" style="color:var(--muted);font-size:12px">选择起始日期后查询累计上下行流量</span>
+      </div>
+      <div style="border-top:1px dashed var(--border);margin:12px 0"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">📈 总累计流量</div>
+      <div id="tr_total" style="color:var(--muted);font-size:12px">加载中...</div>
+    </div>
+
+    <div class="panel">
       <h2>🌐 反向代理（Nginx）</h2>
       <div id="proxy_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
       <div class="form-row" id="px_install_row" style="display:none">
@@ -731,7 +768,7 @@ async function refreshAll() {
     $("st_ver").textContent = "v" + status.version;
     $("panel_port_input").value = status.panel_port || "";
     $("st_ver").textContent = "v" + status.version;
-    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadIpv6(); loadDocker(); autoCheckUpgrade();
+    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadTraffic(); loadIpv6(); loadDocker(); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
 
@@ -836,6 +873,84 @@ function setIpv6(mode) {
 
 /* ---------- BBR ---------- */
 let bbrInfo = null;
+/* ---------- 网卡流量统计 ---------- */
+let trCurrent = "";   // 当前选中网卡
+let trTimer = null;   // 实时速率定时器句柄
+function fmtBytes(b) {
+  if (!b || b <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let i = 0, v = b;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v >= 100 || i === 0 ? 0 : 1) + " " + units[i];
+}
+function fmtSpeed(bps) {
+  if (!bps || bps <= 0) return "0 B/s";
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let i = 0, v = bps;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v >= 100 ? 0 : 1) + " " + units[i];
+}
+function trToday() { return new Date().toISOString().slice(0, 10); }
+async function loadTraffic() {
+  try {
+    const q = trCurrent ? "?iface=" + encodeURIComponent(trCurrent) : "";
+    const d = await api("GET", "/api/traffic" + q);
+    trCurrent = d.current || d.primary || trCurrent;
+    const sel = $("tr_iface");
+    const prev = sel.value;
+    sel.innerHTML = "";
+    (d.ifaces && d.ifaces.length ? d.ifaces : [d.primary]).forEach(n => {
+      const op = document.createElement("option");
+      op.value = n; op.textContent = n;
+      sel.appendChild(op);
+    });
+    if (prev) sel.value = prev;
+    const cur = sel.value || d.primary || "";
+    const r = (d.rates && d.rates[cur]) || {};
+    $("tr_rate").textContent = "实时：↑ " + fmtSpeed(r.tx_bps) + " ↓ " + fmtSpeed(r.rx_bps);
+    $("tr_today").textContent = "↑ " + fmtBytes(d.today.rx) + " ↓ " + fmtBytes(d.today.tx);
+    $("tr_yest").textContent = "↑ " + fmtBytes(d.yesterday.rx) + " ↓ " + fmtBytes(d.yesterday.tx);
+    const tbody = $("tr_week");
+    tbody.innerHTML = "";
+    const today = trToday();
+    (d.week || []).forEach(w => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + (w.date === today ? "今天" : w.date.slice(5)) + "</td>"
+        + "<td>" + fmtBytes(w.rx) + "</td>"
+        + "<td>" + fmtBytes(w.tx) + "</td>"
+        + "<td>" + fmtBytes(w.rx + w.tx) + "</td>";
+      tbody.appendChild(tr);
+    });
+    $("tr_total").textContent = "自 " + (d.since || "—") + " 起：↑ " + fmtBytes(d.total.rx)
+      + " ↓ " + fmtBytes(d.total.tx) + "（合计 " + fmtBytes(d.total.rx + d.total.tx) + "）";
+    if (d.custom) {
+      $("tr_custom").textContent = "从 " + d.custom.from + " 起（" + d.custom.days + " 天）：↑ "
+        + fmtBytes(d.custom.rx) + " ↓ " + fmtBytes(d.custom.tx)
+        + "（合计 " + fmtBytes(d.custom.rx + d.custom.tx) + "）";
+    }
+  } catch (e) { if (e.message !== "未登录") $("tr_rate").textContent = "实时：获取失败"; }
+  if (!trTimer) trTimer = setInterval(loadTraffic, 30000); // 30s 刷新速率与今日数据
+}
+function trSwitchIface() {
+  trCurrent = $("tr_iface").value;
+  loadTraffic();
+}
+async function trQuery() {
+  const v = $("tr_from").value;
+  if (!v) { $("tr_custom").textContent = "请先选择起始日期"; return; }
+  try {
+    const q = "?from=" + v + (trCurrent ? "&iface=" + encodeURIComponent(trCurrent) : "");
+    const d = await api("GET", "/api/traffic" + q);
+    if (d.custom) {
+      $("tr_custom").textContent = "从 " + d.custom.from + " 起（" + d.custom.days + " 天）：↑ "
+        + fmtBytes(d.custom.rx) + " ↓ " + fmtBytes(d.custom.tx)
+        + "（合计 " + fmtBytes(d.custom.rx + d.custom.tx) + "）";
+    } else {
+      $("tr_custom").textContent = "该日期之后暂无记录";
+    }
+  } catch (e) { toast(e.message, "err"); }
+}
+
 async function loadBbr() {
   try {
     const d = await api("GET", "/api/bbr");

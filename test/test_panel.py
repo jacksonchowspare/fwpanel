@@ -2507,5 +2507,136 @@ class TestDocker(unittest.TestCase):
                 setattr(panel, name, fn)
 
 
+class TestTraffic(unittest.TestCase):
+    """网卡流量统计：TrafficStore 聚合逻辑 + /api/traffic API"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg = make_cfg()
+        cls.store = panel.RuleStore()
+        cls.store.rules = []
+        cls.nft = panel.NFTManager(cls.store, cls.cfg)
+        cls.auth = panel.Auth(cls.cfg)
+        cls.server = panel.PanelServer(("127.0.0.1", 17997), panel.PanelHandler,
+                                       cls.cfg, cls.store, cls.nft, cls.auth)
+        cls.tmp = tempfile.mkdtemp(prefix="fwpanel-traffic-")
+        cls.traffic = panel.TrafficStore(os.path.join(cls.tmp, "traffic.json"))
+        cls.server.traffic = cls.traffic  # 挂载（与 main serve 相同）
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base = "http://127.0.0.1:17997"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _req(self, method, path, data=None, token=None):
+        req = urllib.request.Request(self.base + path, method=method)
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode()
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, body) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read())
+            except Exception:
+                return e.code, {}
+
+    def _token(self):
+        for pw in (TEST_PASS, "NewPass123"):
+            code, d = self._req("POST", "/api/login",
+                                {"username": TEST_USER, "password": pw})
+            if code == 200:
+                return d["token"]
+        self.fail("无法获取测试 token")
+
+    def test_traffic_store_record(self):
+        """record 增量累加 + 速率计算 + 计数器回退不产生负值"""
+        ts = panel.TrafficStore(os.path.join(self.tmp, "t-record.json"))
+        now = 1000.0
+        ts.record({"eth0": {"rx": 1000, "tx": 2000}}, now=now)  # 首次只建基线
+        # setdefault 会创建当天空条目，但不累加流量
+        self.assertEqual(ts.data["days"], {panel.datetime.date.today().isoformat(): {}})
+        ts.record({"eth0": {"rx": 7000, "tx": 5000}}, now=now + 10)  # 10 秒后
+        day = list(ts.data["days"].values())[0]
+        self.assertEqual(day["eth0"]["rx"], 6000)
+        self.assertEqual(day["eth0"]["tx"], 3000)
+        self.assertAlmostEqual(ts._rates["eth0"]["rx_bps"], 600.0)
+        self.assertAlmostEqual(ts._rates["eth0"]["tx_bps"], 300.0)
+        # 计数器回退（网卡重置）应跳过，不产生负值
+        ts.record({"eth0": {"rx": 100, "tx": 100}}, now=now + 20)
+        day = list(ts.data["days"].values())[0]
+        self.assertEqual(day["eth0"]["rx"], 6000)
+        self.assertEqual(day["eth0"]["tx"], 3000)
+        # 持久化（重载后数据还在）
+        ts2 = panel.TrafficStore(ts.path)
+        self.assertEqual(ts2.data["days"], ts.data["days"])
+
+    def test_traffic_totals_daily(self):
+        """totals_for 区间累计 + daily 近 7 天补 0"""
+        ts = panel.TrafficStore(os.path.join(self.tmp, "t-totals.json"))
+        d0 = panel.datetime.date.today()
+        ds0 = d0.isoformat()
+        ds1 = (d0 - panel.datetime.timedelta(days=1)).isoformat()
+        ts.data["days"] = {
+            ds0: {"eth0": {"rx": 10, "tx": 20}},
+            ds1: {"eth0": {"rx": 30, "tx": 40}},
+        }
+        self.assertEqual(ts.totals_for("eth0"), {"rx": 40, "tx": 60})
+        self.assertEqual(ts.totals_for("eth0", start=ds1, end=ds1), {"rx": 30, "tx": 40})
+        self.assertEqual(ts.totals_for("eth0", start=ds0), {"rx": 10, "tx": 20})
+        week = ts.daily("eth0", 7)
+        self.assertEqual(len(week), 7)
+        self.assertEqual(week[-1]["date"], ds0)   # 最后一项是今天
+        self.assertEqual(week[-1]["rx"], 10)
+        self.assertEqual(week[-2]["rx"], 30)      # 昨天
+        self.assertEqual(week[0]["rx"], 0)        # 更早的天补 0
+
+    def test_traffic_api(self):
+        """/api/traffic：today/yesterday/week/total/rates + 自定义起始日期 + 非法日期 400"""
+        ts = self.traffic
+        today = panel.datetime.date.today().isoformat()
+        yest = (panel.datetime.date.today() - panel.datetime.timedelta(days=1)).isoformat()
+        ts.data["days"] = {
+            today: {"eth0": {"rx": 1000, "tx": 2000}},
+            yest: {"eth0": {"rx": 500, "tx": 700}},
+        }
+        ts._last = {"eth0": {"rx": 100000, "tx": 200000, "ts": panel.time.time() - 10}}
+        saved = panel.read_net_dev
+        panel.read_net_dev = lambda: {"eth0": {"rx": 100000, "tx": 200000}}
+        try:
+            # 默认（主网卡可能不是 eth0，显式指定）
+            code, d = self._req("GET", "/api/traffic?iface=eth0", token=self._token())
+            self.assertEqual(code, 200, d)
+            self.assertIn("eth0", d["ifaces"])
+            self.assertEqual(d["current"], "eth0")
+            self.assertEqual(d["today"], {"rx": 1000, "tx": 2000})
+            self.assertEqual(d["yesterday"], {"rx": 500, "tx": 700})
+            self.assertEqual(len(d["week"]), 7)
+            self.assertEqual(d["total"], {"rx": 1500, "tx": 2700})
+            self.assertIn("rates", d)
+            self.assertIn("eth0", d["rates"])
+            # 自定义起始日期：昨天起 → 两天合计
+            code, d = self._req("GET", "/api/traffic?iface=eth0&from=" + yest,
+                                token=self._token())
+            self.assertEqual(code, 200, d)
+            self.assertEqual(d["custom"]["rx"], 1500)
+            self.assertEqual(d["custom"]["tx"], 2700)
+            self.assertEqual(d["custom"]["days"], 2)
+            self.assertEqual(d["custom"]["from"], yest)
+            # 非法日期 → 400
+            code, d = self._req("GET", "/api/traffic?from=2026-13-99", token=self._token())
+            self.assertEqual(code, 400)
+        finally:
+            panel.read_net_dev = saved
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

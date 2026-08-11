@@ -851,6 +851,159 @@ def bruteforce_loop(config, store, interval=30):
         time.sleep(interval)
 
 
+# ------------------------------- 网卡流量统计 -------------------------------
+
+TRAFFIC_FILE = os.environ.get("FW_TRAFFIC_FILE", os.path.join(BASE_DIR, "traffic.json"))
+TRAFFIC_INTERVAL = 60  # 采样间隔（秒）
+
+
+def read_net_dev():
+    """读取 /proc/net/dev 各网卡累计字节，返回 {iface: {"rx": int, "tx": int}}（排除 lo）"""
+    result = {}
+    try:
+        with open("/proc/net/dev", "r", encoding="utf-8") as f:
+            lines = f.readlines()[2:]  # 跳过表头两行
+    except OSError:
+        return result
+    for line in lines:
+        if ":" not in line:
+            continue
+        name, data = line.split(":", 1)
+        name = name.strip()
+        if not name or name == "lo":
+            continue
+        parts = data.split()
+        if len(parts) >= 9:
+            # /proc/net/dev 行格式: rx_bytes rx_packets ... tx_bytes(第9列) ...
+            result[name] = {"rx": int(parts[0]), "tx": int(parts[8])}
+    return result
+
+
+def primary_iface():
+    """识别主网卡：/proc/net/route 的默认路由网卡，兜底第一个非 lo 有数据网卡"""
+    try:
+        with open("/proc/net/route", "r", encoding="utf-8") as f:
+            for line in f.readlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] == "00000000" and parts[0] != "lo":
+                    return parts[0]
+    except OSError:
+        pass
+    devs = read_net_dev()
+    if devs:
+        return sorted(devs.keys())[0]
+    return "eth0"
+
+
+class TrafficStore:
+    """按天聚合的网卡流量存储：traffic.json = {"since": "YYYY-MM-DD", "days": {"YYYY-MM-DD": {"iface": {"rx":, "tx":}}}}"""
+
+    def __init__(self, path=None):
+        self.path = path or TRAFFIC_FILE
+        self.data = {"since": None, "days": {}}
+        self._last = None  # {iface: {"rx":, "tx":, "ts":}} 上次采样快照
+        self._rates = {}   # {iface: {"rx_bps":, "tx_bps":}} 最近一次采样速率
+        self.load()
+
+    def load(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                self.data = json.load(f)
+        except (OSError, ValueError):
+            self.data = {"since": None, "days": {}}
+        if not isinstance(self.data.get("days"), dict):
+            self.data["days"] = {}
+        if "since" not in self.data:
+            self.data["since"] = None
+
+    def save(self):
+        tmp = self.path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass  # 磁盘不可写不阻断面板
+
+    def record(self, counters=None, now=None):
+        """采样一次：当前累计值与上次快照的差值累加到当天；首次采样只建基线（防重启跳变）"""
+        counters = counters if counters is not None else read_net_dev()
+        now = now if now is not None else time.time()
+        today = datetime.date.today().isoformat()
+        day = self.data["days"].setdefault(today, {})
+        self._rates = {}
+        if self._last is None:
+            self._last = {name: {"rx": c["rx"], "tx": c["tx"], "ts": now}
+                          for name, c in counters.items()}
+            if self.data["since"] is None:
+                self.data["since"] = today
+                self.save()
+            return
+        for name, c in counters.items():
+            prev = self._last.get(name)
+            if prev is None:
+                self._last[name] = {"rx": c["rx"], "tx": c["tx"], "ts": now}
+                continue
+            dt = now - prev["ts"]
+            if dt <= 0:
+                dt = 1
+            drx = max(0, c["rx"] - prev["rx"])
+            dtx = max(0, c["tx"] - prev["tx"])
+            self._rates[name] = {"rx_bps": drx / dt, "tx_bps": dtx / dt}
+            if drx > 0 or dtx > 0:
+                slot = day.setdefault(name, {"rx": 0, "tx": 0})
+                slot["rx"] += drx
+                slot["tx"] += dtx
+            self._last[name] = {"rx": c["rx"], "tx": c["tx"], "ts": now}
+        if self.data["since"] is None:
+            self.data["since"] = today
+        self.save()
+
+    def totals_for(self, iface, start=None, end=None):
+        """按日期范围累加某网卡流量；start/end 为 'YYYY-MM-DD' 或 None"""
+        rx = tx = 0
+        for date_str, day in self.data["days"].items():
+            if start and date_str < start:
+                continue
+            if end and date_str > end:
+                continue
+            slot = day.get(iface)
+            if slot:
+                rx += slot.get("rx", 0)
+                tx += slot.get("tx", 0)
+        return {"rx": rx, "tx": tx}
+
+    def daily(self, iface, days=7):
+        """近 days 天每日流量（无记录的天补 0）"""
+        out = []
+        today = datetime.date.today()
+        for i in range(days - 1, -1, -1):
+            d = today - datetime.timedelta(days=i)
+            ds = d.isoformat()
+            slot = self.data["days"].get(ds, {}).get(iface, {})
+            out.append({"date": ds, "rx": slot.get("rx", 0), "tx": slot.get("tx", 0)})
+        return out
+
+    def ifaces(self):
+        """全部出现过的网卡（含速率表）"""
+        ifaces = set()
+        for day in self.data["days"].values():
+            ifaces.update(day.keys())
+        ifaces.update(self._rates.keys())
+        return sorted(ifaces)
+
+
+def traffic_loop(store, interval=TRAFFIC_INTERVAL):
+    """后台线程：定期采样网卡流量并按天聚合"""
+    while True:
+        try:
+            store.record()
+        except Exception as e:
+            log(f"网卡流量采样异常: {e}")
+        time.sleep(interval)
+
+
 # ------------------------------- 反向代理（Nginx） -------------------------------
 
 PROXIES_FILE = os.path.join(BASE_DIR, "proxies.json")
@@ -2207,6 +2360,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._serve_static(path[len("/static/"):])
         elif path == "/api/bbr":
             self._api_bbr()
+        elif path == "/api/traffic":
+            self._api_traffic()
         elif path == "/api/ipv6":
             self._api_ipv6()
         elif path == "/api/cert":
@@ -2874,6 +3029,53 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return
         self._send(200, {"ok": True,
                          "msg": f"{ip} 已解封" if removed else f"{ip} 不在封禁列表"})
+
+    def _api_traffic(self):
+        """网卡流量统计：GET /api/traffic?iface=eth0&from=YYYY-MM-DD
+        返回 网卡列表/实时速率/今日/昨日/近7天/总累计/自定义起始日期累计"""
+        token = self._require_auth()
+        if token is None:
+            return
+        traffic = getattr(self.server, "traffic", None)
+        if traffic is None:
+            traffic = TrafficStore()  # 兜底（未挂载时独立实例）
+        try:
+            traffic.record()  # 顺手补一次采样，让今日与速率最新
+        except Exception:
+            pass
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        iface = (qs.get("iface") or [""])[0].strip() or primary_iface()
+        from_date = (qs.get("from") or [""])[0].strip()
+        if from_date:
+            try:
+                datetime.date.fromisoformat(from_date)
+            except ValueError:
+                self._send(400, {"error": "日期格式应为 YYYY-MM-DD"})
+                return
+        today = datetime.date.today().isoformat()
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        resp = {
+            "ifaces": traffic.ifaces(),
+            "primary": primary_iface(),
+            "current": iface,
+            "rates": traffic._rates,
+            "today": traffic.totals_for(iface, start=today),
+            "yesterday": traffic.totals_for(iface, start=yesterday, end=yesterday),
+            "week": traffic.daily(iface, 7),
+            "total": traffic.totals_for(iface),
+            "since": traffic.data.get("since"),
+        }
+        if from_date:
+            d0 = datetime.date.fromisoformat(from_date)
+            d1 = datetime.date.today()
+            resp["custom"] = {
+                "rx": traffic.totals_for(iface, start=from_date)["rx"],
+                "tx": traffic.totals_for(iface, start=from_date)["tx"],
+                "from": from_date,
+                "days": max(0, (d1 - d0).days + 1),
+            }
+        self._send(200, resp)
 
     def _api_bbr(self):
         """查询 BBR 状态与内核版本"""
@@ -3657,6 +3859,12 @@ def main():
     # SSH 防爆破后台监控（配置启用后生效）
     threading.Thread(target=bruteforce_loop, args=(config, store), daemon=True).start()
     log("SSH 防爆破监控线程已启动")
+    # 网卡流量统计后台线程（按天聚合）
+    traffic = TrafficStore()
+    traffic.record()  # 启动建立采样基线
+    server.traffic = traffic
+    threading.Thread(target=traffic_loop, args=(traffic,), daemon=True).start()
+    log("网卡流量统计线程已启动")
 
     # 启动时应用一次规则（保证面板规则生效）
     ok, msg = nft.apply()
