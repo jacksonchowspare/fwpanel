@@ -22,14 +22,39 @@
   --bg: #0f1419; --card: rgba(26,33,43,.72); --border: rgba(255,255,255,.10);
   --text: #e6ebf2; --muted: #8b98a9; --accent: #3d8bfd; --accent2: #22c55e;
   --danger: #ef4444; --warn: #f59e0b;
+  /* 主题可切换（白天/黑夜）补充变量 */
+  --panel-solid: #1d2733;      /* 日历面板/实底区块 */
+  --input-bg: #0d1218;         /* 输入框/代码块背景 */
+  --hover-bg: rgba(255,255,255,.05);
+  --hover-bg2: rgba(255,255,255,.10);
+  --hover-border: rgba(255,255,255,.14);
+  --tabs-bg: rgba(26,33,43,.78);
+  --btn-grad-a: #4da3ff; --btn-grad-b: #2f6ff0;
+  --danger-grad-a: #f87171; --danger-grad-b: #dc2626;
+  --btn-inset: rgba(255,255,255,.22);
+  --shadow-card: 0 4px 20px rgba(0,0,0,.25);
+  --glow1: rgba(61,139,253,.16); --glow2: rgba(34,197,94,.10); --glow3: rgba(139,92,246,.08);
+}
+body[data-theme="light"] {
+  --bg: #eef1f6; --card: rgba(255,255,255,.85); --border: rgba(15,30,50,.12);
+  --text: #1c2430; --muted: #5c6b7e; --accent: #2f6ff0; --accent2: #16a34a;
+  --danger: #dc2626; --warn: #d97706;
+  --panel-solid: #f0f3f8; --input-bg: #ffffff;
+  --hover-bg: rgba(15,30,50,.06); --hover-bg2: rgba(15,30,50,.10); --hover-border: rgba(15,30,50,.16);
+  --tabs-bg: rgba(255,255,255,.88);
+  --btn-grad-a: #3b82f6; --btn-grad-b: #2563eb;
+  --danger-grad-a: #ef4444; --danger-grad-b: #b91c1c;
+  --btn-inset: rgba(255,255,255,.35);
+  --shadow-card: 0 4px 16px rgba(30,50,80,.10);
+  --glow1: rgba(61,139,253,.10); --glow2: rgba(34,197,94,.06); --glow3: rgba(139,92,246,.05);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   background:
-    radial-gradient(900px 600px at 8% -5%, rgba(61,139,253,.16), transparent 60%),
-    radial-gradient(800px 600px at 105% 8%, rgba(34,197,94,.10), transparent 55%),
-    radial-gradient(700px 500px at 50% 110%, rgba(139,92,246,.08), transparent 60%),
+    radial-gradient(900px 600px at 8% -5%, var(--glow1), transparent 60%),
+    radial-gradient(800px 600px at 105% 8%, var(--glow2), transparent 55%),
+    radial-gradient(700px 500px at 50% 110%, var(--glow3), transparent 60%),
     var(--bg);
   background-attachment: fixed;
   color: var(--text);
@@ -50,7 +75,7 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
   border-radius: 12px;
   padding: 14px 16px;
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 4px 20px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.04);
+  box-shadow: var(--shadow-card), inset 0 1px 0 rgba(255,255,255,.04);
 }
 .card .k { color: var(--muted); font-size: 12px; }
 .card .v { font-size: 18px; font-weight: 600; margin-top: 4px; }
@@ -62,7 +87,7 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
   padding: 16px;
   margin-bottom: 20px;
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 4px 24px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.04);
+  box-shadow: var(--shadow-card), inset 0 1px 0 rgba(255,255,255,.04);
 }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch; margin-bottom: 20px; }
 .grid2 .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
@@ -120,8 +145,8 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 }
 .btn:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(61,139,253,.4), inset 0 1px 0 rgba(255,255,255,.28); }
 .btn:active { transform: translateY(0); box-shadow: 0 1px 4px rgba(61,139,253,.3), inset 0 1px 0 rgba(255,255,255,.2); }
-.btn.ghost { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.16); color: var(--text); box-shadow: none; text-shadow: none; }
-.btn.ghost:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.3); filter: none; transform: translateY(-1px); box-shadow: 0 2px 10px rgba(0,0,0,.2); }
+.btn.ghost { background: var(--hover-bg); border: 1px solid var(--hover-border); color: var(--text); box-shadow: none; text-shadow: none; }
+.btn.ghost:hover { background: var(--hover-bg2); border-color: var(--hover-border); filter: none; transform: translateY(-1px); box-shadow: 0 2px 10px rgba(0,0,0,.2); }
 .btn.ghost:active { transform: translateY(0); }
 .btn.danger { background: linear-gradient(135deg, #f87171, #dc2626); box-shadow: 0 2px 8px rgba(239,68,68,.28), inset 0 1px 0 rgba(255,255,255,.2); }
 .btn.danger:hover { box-shadow: 0 4px 14px rgba(239,68,68,.42), inset 0 1px 0 rgba(255,255,255,.26); }
@@ -129,7 +154,7 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 .btn.mini { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
 td .btn.mini + .btn.mini { margin-left: 6px; }
 .btn:disabled { opacity: .4; cursor: not-allowed; transform: none !important; box-shadow: none !important; filter: none !important; }
-input, select, textarea { background: #0d1218; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
+input, select, textarea { background: var(--input-bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
 /* 自绘日期选择面板：日期格样式 */
 #tr_cal .cal_day { height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background .12s ease; }
 #tr_cal .cal_day:hover { background: rgba(61,139,253,.18); }
@@ -137,18 +162,18 @@ input, select, textarea { background: #0d1218; border: 1px solid var(--border); 
 #tr_cal .cal_day.sel { background: var(--accent); color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(61,139,253,.35); }
 #tr_cal .cal_day.blank { cursor: default; border: none; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-input::placeholder, textarea::placeholder { color: #5c6b7e; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
 .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
 /* 分组导航 tabs（吸顶，玻璃拟态与卡片同风格） */
-.tabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin: 14px 0 6px; padding: 8px 10px; position: sticky; top: 0; z-index: 40; background: rgba(26,33,43,.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.10); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.04); }
-.tab { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.14); color: var(--text); border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; transition: all .15s ease; }
-.tab:hover { background: rgba(255,255,255,.1); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin: 14px 0 6px; padding: 8px 10px; position: sticky; top: 0; z-index: 40; background: var(--tabs-bg); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.10); border-radius: 12px; box-shadow: var(--shadow-card), inset 0 1px 0 rgba(255,255,255,.04); }
+.tab { background: var(--hover-bg); border: 1px solid var(--hover-border); color: var(--text); border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; transition: all .15s ease; }
+.tab:hover { background: var(--hover-bg2); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .tab.active { background: linear-gradient(135deg,#4da3ff,#2f6ff0); border-color: transparent; color: #fff; box-shadow: 0 2px 8px rgba(61,139,253,.35), inset 0 1px 0 rgba(255,255,255,.22); }
 table { width: 100%; border-collapse: collapse; }
 .table-wrap { overflow-x: auto; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
 th { color: var(--muted); font-weight: 500; }
-tr:hover td { background: #1d2733; }
+tr:hover td { background: var(--panel-solid); }
 .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
 .tag.allow { background: rgba(34,197,94,.15); color: var(--accent2); }
 .tag.deny { background: rgba(239,68,68,.15); color: var(--danger); }
@@ -169,7 +194,7 @@ tr:hover td { background: #1d2733; }
 .svc .cs-proto { width: 102px; padding: 4px 6px; font-size: 12px; margin-left: 8px; }
 .svc .cs-hist { width: 112px; padding: 4px 6px; font-size: 12px; margin-left: 8px; }
 .empty { color: var(--muted); text-align: center; padding: 24px; }
-#toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #232e3b; border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; font-size: 13px; }
+#toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--panel-solid); border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; display: none; z-index: 99; font-size: 13px; }
 #toast.err { border-color: var(--danger); color: var(--danger); }
 #toast.okk { border-color: var(--accent2); color: var(--accent2); }
 #login { max-width: 360px; margin: 12vh auto; }
@@ -211,6 +236,7 @@ tr:hover td { background: #1d2733; }
         <div class="sub" id="sub_title">nftables 简易VPS控制面板</div>
       </div>
       <div class="actions">
+        <button class="btn ghost" id="btn_theme" onclick="toggleTheme()">白天模式</button>
         <button class="btn ghost" onclick="openPwd()">修改密码</button>
         <button class="btn ghost" id="btn_restart" onclick="restartPanel()">重启面板</button>
         <button class="btn ghost" onclick="logout()">退出</button>
@@ -284,7 +310,7 @@ tr:hover td { background: #1d2733; }
     </div>
 
     <!-- 流量统计：自绘日期选择面板（深色主题） -->
-    <div id="tr_cal" style="display:none;position:fixed;z-index:9999;width:252px;max-width:calc(100vw - 24px);background:#141b26;border:1px solid rgba(255,255,255,.12);border-radius:10px;box-shadow:0 10px 36px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:10px">
+    <div id="tr_cal" style="display:none;position:fixed;z-index:9999;width:252px;max-width:calc(100vw - 24px);background:var(--panel-solid);border:1px solid var(--hover-border);border-radius:10px;box-shadow:0 10px 36px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:10px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <button class="btn mini ghost" onclick="trCal.month(-1)">◀</button>
         <span id="tr_cal_title" style="font-size:13px;font-weight:600"></span>
@@ -539,7 +565,7 @@ tr:hover td { background: #1d2733; }
             <span style="align-self:center">启用自动封禁（检测 SSH 登录失败，当前连接 IP 自动豁免）</span>
           </div>
 
-          <div style="background:#0d1218;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+          <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
             <div style="color:var(--muted);font-size:12px;margin-bottom:8px">⚙️ 自动封禁参数</div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <span style="font-size:13px;white-space:nowrap">失败 <input id="bf_fails" style="width:50px;padding:5px" inputmode="numeric"> 次</span>
@@ -549,7 +575,7 @@ tr:hover td { background: #1d2733; }
             </div>
           </div>
 
-          <div style="background:#0d1218;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
+          <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:14px">
             <div style="color:var(--muted);font-size:12px;margin-bottom:8px">🚫 手动封禁 / 解封</div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <input id="bf_ban_ip" placeholder="要封禁的 IP" style="width:140px">
@@ -638,14 +664,14 @@ tr:hover td { background: #1d2733; }
         <span style="color:var(--muted);font-size:12px">公钥（fullchain.pem）</span>
         <button class="btn mini ghost" onclick="copyPath('pm_cert')">复制公钥路径</button>
       </div>
-      <code id="pm_cert" style="display:block;background:#0d1218;border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;font-size:12px"></code>
+      <code id="pm_cert" style="display:block;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;font-size:12px"></code>
     </div>
     <div style="margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <span style="color:var(--muted);font-size:12px">私钥（privkey.pem）</span>
         <button class="btn mini ghost" onclick="copyPath('pm_key')">复制私钥路径</button>
       </div>
-      <code id="pm_key" style="display:block;background:#0d1218;border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;font-size:12px"></code>
+      <code id="pm_key" style="display:block;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;font-size:12px"></code>
     </div>
     <div class="btnrow">
       <button class="btn" onclick="closePathModal()">关闭</button>
@@ -913,6 +939,18 @@ function setIpv6(mode) {
 
 /* ---------- BBR ---------- */
 let bbrInfo = null;
+/* ---------- 主题切换（白天/黑夜） ---------- */
+function setTheme(t) {
+  document.body.dataset.theme = t;
+  localStorage.setItem("fw_theme", t);
+  const b = $("btn_theme");
+  if (b) b.textContent = t === "light" ? "夜间模式" : "白天模式";
+}
+function toggleTheme() {
+  setTheme(document.body.dataset.theme === "light" ? "dark" : "light");
+}
+setTheme(localStorage.getItem("fw_theme") === "light" ? "light" : "dark");
+
 /* ---------- 分组导航 tabs ---------- */
 function switchTab(sec) {
   localStorage.setItem("fw_sec", sec);
@@ -1939,7 +1977,7 @@ async function dkLogs(id) {
   try {
     const d = await api("GET", "/api/docker/logs/" + id);
     const el = document.createElement("div");
-    el.style.cssText = "max-height:400px;overflow:auto;background:#0d1218;border:1px solid var(--border);border-radius:8px;padding:10px;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all";
+    el.style.cssText = "max-height:400px;overflow:auto;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all";
     el.textContent = d.logs || "（无日志）";
     confirmPanel("", () => { closeCfm(); }, "📜 容器日志", el);
   } catch (e) { toast(e.message, "err"); }
