@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fwpanel — 简易防火墙控制面板（适配 Debian 13 / nftables）
+fwpanel — 简易VPS控制面板（适配 Debian 13 / nftables）
 ================================================================
 零第三方依赖：仅使用 Python 标准库 + 系统 nft 命令。
 
@@ -3615,7 +3615,7 @@ def cmd_open_port(port, proto="tcp"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="fwpanel 简易防火墙控制面板")
+    parser = argparse.ArgumentParser(description="fwpanel 简易VPS控制面板")
     parser.add_argument("cmd", nargs="?", default="serve",
                         choices=["serve", "reset-password", "apply", "open-port"])
     parser.add_argument("arg1", nargs="?", help="open-port 的端口（如 8080 或 8080/udp）")

@@ -1,6 +1,6 @@
-# FW-Panel · 简易防火墙控制面板
+# FW-Panel · 简易VPS控制面板
 
-轻量易用的 Linux 防火墙管理面板：**Python 标准库 + nftables**，零第三方 Python 依赖，不依赖 firewalld / ufw 等外部组件。装完即可通过网页管理端口放行、IP 规则、SSH 保护、反向代理与证书。
+轻量易用的 Linux VPS 控制面板：**Python 标准库 + nftables**，零第三方 Python 依赖，不依赖 firewalld / ufw 等外部组件。装完即可通过网页管理防火墙规则、Docker 容器、反向代理与 SSL 证书、SSH 防护与网络优化。
 
 ## 支持系统
 
@@ -65,26 +65,28 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 - **一键开启 BBR**：官方原版方案（fq + bbr），配置持久化 + 立即生效 + 回读校验；内核版本与支持状态检测（兼容模块化内核）
 - **IPv6 设置**：IPv4 优先（gai.conf precedence）/ 禁用 IPv6 / 开启 IPv6，sysctl 持久化 + 立即生效
 
-### Docker 容器管理（v1.24.0）
-- **一键安装**：自动识别 apt / pacman / dnf 安装 Docker + Compose 插件并启动服务（未安装时面板内一键完成）
-- **容器管理**：容器列表（状态/端口）+ 启动/停止/重启/删除 + 查看日志；搜索 + 分页
-- **创建容器**：容器名 / 镜像 / 端口映射（宿主机:容器，多个逗号分隔）/ 环境变量（KEY=值，多个逗号分隔）
-- **镜像管理**：拉取镜像 / 镜像列表（仓库/标签/大小）/ 删除镜像
-- **Docker Compose**：粘贴 docker-compose.yml 一键启动 / 停止（配置持久化到 /etc/fwpanel）
+### Docker 容器管理
+- **一键安装**：自动识别 apt / pacman / dnf 安装 Docker + Compose 并启动服务，**国外直连 / 国内镜像源双按钮**任选
+- **存储目录体系**：一键创建 `/DockerData` 存储根目录（镜像 / compose / 容器数据三区），镜像存储可切换到 `/DockerData/dockerimage`（自动保留原 daemon.json 配置）
+- **容器管理**：容器列表（状态/端口）+ 启动/停止/重启/删除 + 查看日志 + 搜索分页；创建容器自动挂载 `/DockerData/dockerrun/<容器名>` 数据卷
+- **镜像管理**：拉取 / 列表（仓库/标签/大小）/ 删除；**使用中/未使用标记**（含已停止容器引用），一键清理未使用镜像
+- **Docker Compose**：粘贴 docker-compose.yml 一键启动 / 停止 / **升级**（拉新镜像重建）；配置文件按镜像名自动分目录保存，**文件夹名称可自定义**；「已保存的 Compose 项目」列表独立管理每个项目（启动/升级/停止，运行状态按钮互斥防误点）
 - **资源监控**：运行中容器实时 CPU / 内存 / 网络 IO / 磁盘 IO（docker stats）
+- **一键卸载**：国内 / 国外源安装的 Docker 都能完整卸载（数据目录保留）
 
-### 反向代理（Nginx）
+### 反向代理与证书（Nginx + ACME）
 - 域名绑定反代（HTTP/HTTPS、WebSocket 勾选、HTTP→HTTPS 跳转、**HSTS 支持**），列表「功能」列显示启用的 WS / HSTS；**已添加代理可随时编辑**（协议 / WebSocket / HSTS 弹窗修改，立即生效）
 - ACME 证书一键申请 / 手动续期 / 证书路径一键复制；**单独申请 SSL 证书模块**（无需配置反代，独立管理多域名证书），状态行显示 **certbot 自动续期状态 + 下次检测时间**（中文格式）
 - 一键安装 nginx + certbot（自动识别 apt/pacman/dnf），证书申请前自动写入 ACME 挑战路径配置并 reload nginx
 - **禁止公网直连**：
   - nginx 兜底 default_server 接管：IP 直连 80 返回 444、443 直接拒绝 TLS 握手
-  - 添加代理自动禁止公网直连**目标端口**（拒绝规则含回环豁免，不影响 nginx 转发）
+  - 添加代理自动禁止公网直连**目标端口**（拒绝规则含回环豁免 + PREROUTING 拦截，Docker 发布端口同样生效）
   - 自动禁用发行版自带默认站点（移出 sites-enabled，避免 default_server 冲突）
 - **修改面板端口自动联动**：指向旧面板端口的反代目标端口自动同步，域名访问不受影响
 
 ### 面板体验
 - **手机/平板自适应**：紧凑布局、表格横向滚动、弹窗适配屏幕、iOS 聚焦缩放自动复位
+- **玻璃拟态主题**：卡片半透明 + 背景光晕 + 按钮渐变动效（可读性优先，输入框保持实底）
 - **登录页**：底部显示当前版本号（自动注入）+ GitHub 项目链接（图标本地化内嵌）
 - **重启面板**：右上角一键重启服务，自动重连
 - **账户设置**：修改用户名 + 密码（双次确认）

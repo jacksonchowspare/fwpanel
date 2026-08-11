@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# fwpanel — 简易防火墙控制面板 一键安装包（Debian/Ubuntu/Arch/Fedora 多发行版）
+# fwpanel — 简易VPS控制面板 一键安装包（Debian/Ubuntu/Arch/Fedora 多发行版）
 # -----------------------------------------------------------------------------
 # 零第三方依赖：Python 标准库 + 系统 nftables，不装 firewalld/ufw。
 #
@@ -20,7 +20,7 @@
 set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
-readonly SCRIPT_NAME="FW-Panel 防火墙面板安装包"
+readonly SCRIPT_NAME="FW-Panel VPS控制面板安装包"
 readonly SCRIPT_VERSION="1.24.30"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
@@ -226,7 +226,7 @@ do_check() {
 
 usage() {
     cat <<EOF
-$SCRIPT_NAME v$SCRIPT_VERSION —— 简易防火墙控制面板（Debian 13 · nftables）
+$SCRIPT_NAME v$SCRIPT_VERSION —— 简易VPS控制面板（Debian 13 · nftables）
 
 用法:
   sudo bash $0                           一键安装（随机端口/用户名/密码，安装结束一并打印）
