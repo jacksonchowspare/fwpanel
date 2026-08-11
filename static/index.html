@@ -207,7 +207,7 @@ tr:hover td { background: #1d2733; }
       </div>
       <div class="actions">
         <button class="btn ghost" onclick="openPwd()">修改密码</button>
-        <button class="btn ghost" id="btn_restart" onclick="restartPanel()">🔄 重启面板</button>
+        <button class="btn ghost" id="btn_restart" onclick="restartPanel()">重启面板</button>
         <button class="btn ghost" onclick="logout()">退出</button>
       </div>
     </div>
@@ -292,7 +292,7 @@ tr:hover td { background: #1d2733; }
       <h2>🌐 反向代理（Nginx）</h2>
       <div id="proxy_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
       <div class="form-row" id="px_install_row" style="display:none">
-        <button class="btn" id="btn_install_nginx" onclick="installNginx()">⚙️ 一键安装 Nginx + certbot</button>
+        <button class="btn" id="btn_install_nginx" onclick="installNginx()">一键安装 Nginx + certbot</button>
         <span style="color:var(--muted);font-size:12px;align-self:center">自动按系统选择 apt / pacman / dnf，安装后自动写入 nginx 配置（需几分钟，期间页面等待属正常）</span>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
@@ -348,13 +348,13 @@ tr:hover td { background: #1d2733; }
       <h2>🐳 Docker 容器管理</h2>
       <div class="form-row" style="margin-bottom:10px">
         <div id="docker_status" style="color:var(--muted);font-size:12px;flex:1">检测中...</div>
-        <button class="btn danger" onclick="uninstallDocker()" id="btn_dk_uninstall" style="display:none">🗑 一键卸载 Docker</button>
+        <button class="btn danger" onclick="uninstallDocker()" id="btn_dk_uninstall" style="display:none">一键卸载 Docker</button>
       </div>
       <div id="docker_install_area" style="display:none;margin-bottom:10px">
         <div class="form-row">
           <span style="color:var(--muted);font-size:12px">Docker 未安装，选择安装方式（自动识别 apt / pacman / dnf）：</span>
-          <button class="btn" id="btn_dk_install_official" onclick="installDocker('official')">🌐 国外直连安装</button>
-          <button class="btn" id="btn_dk_install_china" onclick="installDocker('china')">🇨🇳 国内镜像安装</button>
+          <button class="btn" id="btn_dk_install_official" onclick="installDocker('official')">国外直连安装</button>
+          <button class="btn" id="btn_dk_install_china" onclick="installDocker('china')">国内镜像安装</button>
         </div>
         <div style="color:var(--muted);font-size:12px;margin-top:6px">国内镜像安装：Debian/Ubuntu 使用阿里云 docker-ce 源（docker-ce 全家桶），适合国内服务器官方源连接慢的场景</div>
       </div>
@@ -362,7 +362,7 @@ tr:hover td { background: #1d2733; }
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📦 容器列表</div>
       <div class="form-row" style="margin-bottom:8px">
         <input id="dk_search" placeholder="搜索容器名/镜像/状态" style="flex:1;min-width:160px" oninput="renderDocker()">
-        <button class="btn ghost" onclick="refreshDocker()">🔄 刷新</button>
+        <button class="btn ghost" onclick="refreshDocker()">刷新</button>
       </div>
       <div class="table-wrap">
       <table>
@@ -399,7 +399,7 @@ tr:hover td { background: #1d2733; }
       </div>
       <div class="form-row" style="margin-bottom:8px;margin-top:8px">
         <span style="color:var(--muted);font-size:12px" id="dk_img_hint">🟢 使用中 = 被容器（含停止的）引用 · ⚪ 未使用 = 可安全删除</span>
-        <button class="btn ghost" onclick="pruneDockerImages()">🧹 清理未使用镜像</button>
+        <button class="btn ghost" onclick="pruneDockerImages()">清理未使用镜像</button>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">🗂 存储目录</div>
@@ -410,7 +410,7 @@ tr:hover td { background: #1d2733; }
       <div style="color:var(--muted);font-size:12px;margin-bottom:8px">在根目录创建 /DockerData 及三个核心子目录：<b style="color:var(--text)">dockerimage</b>（镜像存储）/ <b style="color:var(--text)">dockercompose</b>（compose 文件）/ <b style="color:var(--text)">dockerrun</b>（容器数据卷），已存在的目录不会重复创建</div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:8px">目录规则：拉取的镜像 → dockerimage（需点击下方按钮配置生效）· compose 输入框创建的容器 → dockercompose/<镜像名>/ · 创建容器生成的数据卷 → dockerrun/<容器名>:/data</div>
       <div class="form-row" style="margin-bottom:12px">
-        <button class="btn ghost" onclick="setDockerDataRoot()">📦 配置镜像存储到 /DockerData/dockerimage</button>
+        <button class="btn ghost" onclick="setDockerDataRoot()">配置镜像存储到 /DockerData/dockerimage</button>
         <span style="color:var(--muted);font-size:12px" id="dk_dataroot_status">检测中...</span>
       </div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
@@ -418,7 +418,7 @@ tr:hover td { background: #1d2733; }
       <textarea id="dk_compose" placeholder="粘贴 docker-compose.yml 内容..." style="width:100%;min-height:120px;font-family:monospace;font-size:12px;box-sizing:border-box;margin-bottom:8px"></textarea>
       <div class="form-row" style="margin-bottom:8px">
         <input id="dk_compose_folder" placeholder="文件夹名称（留空自动取第一个镜像名，多镜像时建议填写）" style="flex:1;min-width:200px">
-        <button class="btn" onclick="composeUp()">🚀 Compose 启动</button>
+        <button class="btn" onclick="composeUp()">Compose 启动</button>
         <button class="btn ghost" onclick="composeDown()">⏹ Compose 停止</button>
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:8px">文件将保存到 /DockerData/dockercompose/&lt;文件夹名称&gt;/docker-compose.yml；留空时自动按 yml 里第一个镜像名命名（如 nginx:latest → nginx）</div>
@@ -431,7 +431,7 @@ tr:hover td { background: #1d2733; }
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📊 资源监控</div>
       <div class="form-row" style="margin-bottom:8px">
         <span style="color:var(--muted);font-size:12px" id="dk_stats_hint">运行中容器实时 CPU / 内存 / 网络 IO</span>
-        <button class="btn ghost" onclick="loadDockerStats()">🔄 刷新监控</button>
+        <button class="btn ghost" onclick="loadDockerStats()">刷新监控</button>
       </div>
       <div class="table-wrap">
       <table>
@@ -464,16 +464,16 @@ tr:hover td { background: #1d2733; }
           <div style="color:var(--muted);font-size:12px">删除该端口对应协议的放行规则（TCP 会连 TCP+UDP 一起删）</div>
           <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
           <div class="form-row" style="margin-bottom:8px">
-            <button class="btn" onclick="toggleBbr()">🚀 一键开启 BBR</button>
-            <button class="btn ghost" onclick="showKernel()">📦 内核版本</button>
+            <button class="btn" onclick="toggleBbr()">一键开启 BBR</button>
+            <button class="btn ghost" onclick="showKernel()">内核版本</button>
             <span id="bbr_status" style="color:var(--muted);font-size:12px;align-self:center">检测中...</span>
           </div>
           <div style="color:var(--muted);font-size:12px">BBR 为 Google 的 TCP 拥塞控制算法，可提升网络传输速度（需 Linux 4.9+ 内核）</div>
           <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
           <div class="form-row" style="margin-bottom:8px">
-            <button class="btn ghost" onclick="setIpv6('v4_first')">🌐 IPv4 优先</button>
-            <button class="btn ghost" onclick="setIpv6('disable')">🚫 禁用 IPv6</button>
-            <button class="btn ghost" onclick="setIpv6('enable')">✅ 开启 IPv6</button>
+            <button class="btn ghost" onclick="setIpv6('v4_first')">IPv4 优先</button>
+            <button class="btn ghost" onclick="setIpv6('disable')">禁用 IPv6</button>
+            <button class="btn ghost" onclick="setIpv6('enable')">开启 IPv6</button>
             <span id="ipv6_status" style="color:var(--muted);font-size:12px;align-self:center">检测中...</span>
           </div>
           <div style="color:var(--muted);font-size:12px">IPv4 优先 = IPv6 保持开启但优先走 IPv4；禁用/开启立即生效（sysctl + gai.conf）</div>
@@ -2129,7 +2129,7 @@ function installDocker(source) {
       toast(d.msg || "安装完成", d.ok ? "okk" : "err");
       loadDocker();
     } catch (e) { toast(e.message, "err"); }
-    btn.disabled = false; btn.textContent = label === "国内镜像" ? "🇨🇳 国内镜像安装" : "🌐 国外直连安装";
+    btn.disabled = false; btn.textContent = label === "国内镜像" ? "国内镜像安装" : "国外直连安装";
   }, "安装 Docker");
 }
 
@@ -2142,7 +2142,7 @@ function uninstallDocker() {
       toast(d.msg || "卸载完成", d.ok ? "okk" : "err");
       loadDocker();
     } catch (e) { toast(e.message, "err"); }
-    btn.disabled = false; btn.textContent = "🗑 一键卸载 Docker";
+    btn.disabled = false; btn.textContent = "一键卸载 Docker";
   }, "卸载 Docker");
 }
 
