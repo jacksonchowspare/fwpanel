@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel VPS控制面板安装包"
-readonly SCRIPT_VERSION="1.24.43"
+readonly SCRIPT_VERSION="1.24.44"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -43,6 +43,7 @@ PANEL_BIND=""
 PANEL_USER=""
 PANEL_PASS=""
 OPEN_PORTS=""
+VERSION_TAG=""   # 指定安装/升级版本（如 v1.24.42；留空 = main 最新）
 
 # ------------------------------ 颜色 ------------------------------
 if [ -t 1 ]; then
@@ -156,26 +157,33 @@ check_existing() {
 }
 
 do_upgrade() {
-    local tmpdir base_url
+    local tmpdir base_url tag
     tmpdir=$(mktemp -d)
-    base_url="https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main"
-    log_info "下载最新版本..."
+    tag="$(src_tag)"
+    base_url="https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag"
+    if [ -n "$VERSION_TAG" ]; then
+        log_info "下载指定版本 $tag ..."
+    else
+        log_info "下载最新版本...（源: $tag）"
+    fi
     if ! curl -fsSL "$base_url/panel.py" -o "$tmpdir/panel.py" 2>/dev/null || [ ! -s "$tmpdir/panel.py" ]; then
         log_err "下载 panel.py 失败，请检查服务器网络后重试"
         rm -rf "$tmpdir"
         exit 1
     fi
-    # 防降级：当前版本 ≥ 下载版本时跳过（例如服务器已是更高版本）
+    # 防降级：当前版本 ≥ 下载版本时跳过（例如服务器已是更高版本）；--version 显式指定时允许降级回退
     local cur_ver new_ver
     cur_ver=$(grep -oP 'CURRENT_VERSION\s*=\s*"\K[\d.]+' "$APP_DIR/panel.py" 2>/dev/null | head -1)
     new_ver=$(grep -oP 'CURRENT_VERSION\s*=\s*"\K[\d.]+' "$tmpdir/panel.py" 2>/dev/null | head -1)
-    if [ -n "$cur_ver" ] && [ -n "$new_ver" ]; then
+    if [ -z "$VERSION_TAG" ] && [ -n "$cur_ver" ] && [ -n "$new_ver" ]; then
         if [ "$(printf '%s\n' "$cur_ver" "$new_ver" | sort -V | tail -1)" = "$cur_ver" ]; then
             log_info "当前版本 v$cur_ver ≥ 下载版本 v$new_ver，跳过升级（不降级）"
             rm -rf "$tmpdir"
             exit 0
         fi
         log_info "升级 v$cur_ver → v$new_ver"
+    elif [ -n "$VERSION_TAG" ] && [ -n "$new_ver" ]; then
+        log_info "指定版本安装 v$cur_ver → v$new_ver（允许降级）"
     fi
     curl -fsSL "$base_url/static/index.html" -o "$tmpdir/index.html" 2>/dev/null || true
     curl -fsSL "$base_url/static/github-logo.png" -o "$tmpdir/github-logo.png" 2>/dev/null || true
@@ -234,6 +242,7 @@ $SCRIPT_NAME v$SCRIPT_VERSION —— 简易VPS控制面板（Debian 13 · nftabl
   sudo bash $0 --bind 127.0.0.1          仅本机访问（默认 0.0.0.0 开放远程）
   sudo bash $0 --user admin --password x  指定登录凭据
   sudo bash $0 --check                   仅体检环境
+  sudo bash $0 --version v1.24.42        指定版本安装/升级/回退（如回退到 v1.24.42）
   sudo bash $0 --change-password         重置面板密码（交互式）
   sudo bash $0 --uninstall               卸载（停服务 + 删文件）
 
@@ -243,6 +252,7 @@ $SCRIPT_NAME v$SCRIPT_VERSION —— 简易VPS控制面板（Debian 13 · nftabl
       --user NAME     登录用户名（默认随机 8 位）
       --password PASS 登录密码，≥8 位（默认随机 16 位强密码）
       --open-port P   安装后立即开放端口给公网（逗号分隔，如 80,443 或 53/udp）
+      --version V     指定安装/升级到某版本（如 v1.24.42，自动补 v；留空=main 最新；可回退）
       --force         跳过系统检测
   -h, --help          帮助
 
@@ -265,6 +275,7 @@ parse_args() {
             --user)        PANEL_USER="$2"; shift 2 ;;
             --password)    PANEL_PASS="$2"; shift 2 ;;
             --open-port)   OPEN_PORTS="$2"; shift 2 ;;
+            --version)     VERSION_TAG="$2"; shift 2 ;;
             --check)       ACTION="check"; shift ;;
             --change-password) ACTION="change-password"; shift ;;
             -u|--uninstall) ACTION="uninstall"; shift ;;
@@ -354,14 +365,24 @@ download_file() {
     [ -s "$dest" ] || return 1
 }
 
+# 下载源 tag：--version 指定时用该版本（自动补 v 前缀），否则 main 最新
+src_tag() {
+    if [ -n "$VERSION_TAG" ]; then
+        case "$VERSION_TAG" in v*) printf '%s' "$VERSION_TAG" ;; *) printf 'v%s' "$VERSION_TAG" ;; esac
+    else
+        printf '%s' "main"
+    fi
+}
+
 fetch_source() {
     # 三级源自动回退：GitHub raw → jsDelivr CDN → ghproxy 镜像（国内友好）
-    local dest="$1" path="$2"
-    download_file "$dest" "https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/$path" && return 0
+    local dest="$1" path="$2" tag
+    tag="$(src_tag)"
+    download_file "$dest" "https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag/$path" && return 0
     log_warn "GitHub 直连失败，切换 jsDelivr CDN ..."
-    download_file "$dest" "https://cdn.jsdelivr.net/gh/jacksonchowspare/fwpanel@main/$path" && return 0
+    download_file "$dest" "https://cdn.jsdelivr.net/gh/jacksonchowspare/fwpanel@$tag/$path" && return 0
     log_warn "jsDelivr 失败，切换 ghproxy 镜像 ..."
-    download_file "$dest" "https://ghproxy.com/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/$path" && return 0
+    download_file "$dest" "https://ghproxy.com/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag/$path" && return 0
     return 1
 }
 
