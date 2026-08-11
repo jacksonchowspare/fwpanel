@@ -266,8 +266,8 @@ tr:hover td { background: var(--panel-solid); }
       <div class="card"><div class="k"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4"/></svg> 规则数量</div><div class="v" id="st_rules">-</div></div>
       <div class="card"><div class="k"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> SSH 保护端口</div><div class="v" id="st_ssh">-</div></div>
       <div class="card"><div class="k"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg> 面板版本 / 更新</div><div class="v" id="st_ver" style="font-size:15px">-</div>
+        <div style="color:var(--muted);font-size:11px;margin-top:6px" id="st_latest">最新 -</div>
         <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
-          <span style="color:var(--muted);font-size:11px" id="st_latest">最新 -</span>
           <button class="btn mini ghost" onclick="checkUpgrade()">检查更新</button>
           <button class="btn mini" id="btn_upgrade" onclick="doUpgrade()" disabled>升级</button>
         </div>
