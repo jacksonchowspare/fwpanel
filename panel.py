@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.44"
+CURRENT_VERSION = "1.24.45"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -65,11 +65,14 @@ TOKEN_TTL = 24 * 3600          # token 有效期 24 小时
 LOCK_MAX_FAIL = 5              # 连续失败次数
 LOCK_SECONDS = 300             # 锁定 5 分钟
 
-# 升级源（国内友好优先）：jsDelivr → GitHub raw → ghproxy
+# 升级源（国内友好优先）：jsDelivr → GitHub raw → ghproxy.net → ghfast.top → gh-proxy.com
+# ⚠ ghproxy.com 已废弃（返回 200 但内容为 HTML 错误页），不可用；后三个镜像 2026-08 实测返回真实文件
 UPGRADE_SOURCES = [
     "https://cdn.jsdelivr.net/gh/jacksonchowspare/fwpanel@{tag}/{path}",
     "https://raw.githubusercontent.com/jacksonchowspare/fwpanel/{tag}/{path}",
-    "https://ghproxy.com/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/{tag}/{path}",
+    "https://ghproxy.net/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/{tag}/{path}",
+    "https://ghfast.top/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/{tag}/{path}",
+    "https://gh-proxy.com/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/{tag}/{path}",
 ]
 
 # 服务模板：名称 -> (协议, 端口)
@@ -467,11 +470,15 @@ def http_get_json(url, timeout=8):
         return None
 
 
-def http_download(url, dest, timeout=15):
+def http_download(url, dest, timeout=15, expect=None):
+    """下载文件到 dest；expect 为 bytes 前缀（如 b"#!" / b'<!DOCTYPE html>\\n<html lang="zh-CN">'），
+    内容不匹配视为失败——防止镜像源返回 HTTP 200 的 HTML 错误页被当成真实文件"""
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             data = r.read()
         if not data:
+            return False
+        if expect is not None and not data.startswith(expect):
             return False
         with open(dest, "wb") as f:
             f.write(data)
@@ -502,22 +509,28 @@ def get_latest_version():
     d = http_get_json("https://data.jsdelivr.com/v1/package/gh/jacksonchowspare/fwpanel", timeout=20)
     if d and d.get("versions"):
         return d["versions"][0]
+    # 最终兜底：gh-proxy.com 代理 GitHub API（2026-08 实测可用）
+    d = http_get_json("https://gh-proxy.com/https://api.github.com/repos/jacksonchowspare/fwpanel/releases/latest", timeout=20)
+    if d and d.get("tag_name"):
+        return d["tag_name"].lstrip("v")
     return None
 
 
 def download_panel_files(tag, tmpdir):
     """按版本号下载 panel.py / index.html / github-logo.png / favicon.ico 到临时目录；
+    带内容头校验（expect 前缀），镜像返回错误页时跳过该源；
     返回 (py_path, html_path, logo_path 或 None, ico_path 或 None) 或 None"""
     ok, py_path = False, os.path.join(tmpdir, "panel.py")
     for tpl in UPGRADE_SOURCES:
-        if http_download(tpl.format(tag=tag, path="panel.py"), py_path):
+        if http_download(tpl.format(tag=tag, path="panel.py"), py_path, expect=b"#!"):
             ok = True
             break
     if not ok:
         return None
     ok, html_path = False, os.path.join(tmpdir, "index.html")
     for tpl in UPGRADE_SOURCES:
-        if http_download(tpl.format(tag=tag, path="static/index.html"), html_path):
+        if http_download(tpl.format(tag=tag, path="static/index.html"), html_path,
+                         expect=b'<!DOCTYPE html>\n<html lang="zh-CN">'):
             ok = True
             break
     if not ok:
@@ -525,13 +538,15 @@ def download_panel_files(tag, tmpdir):
     logo_path = os.path.join(tmpdir, "github-logo.png")
     ok = False
     for tpl in UPGRADE_SOURCES:
-        if http_download(tpl.format(tag=tag, path="static/github-logo.png"), logo_path):
+        if http_download(tpl.format(tag=tag, path="static/github-logo.png"), logo_path,
+                         expect=b"\x89PNG"):
             ok = True
             break
     ico_path = os.path.join(tmpdir, "favicon.ico")
     ok2 = False
     for tpl in UPGRADE_SOURCES:
-        if http_download(tpl.format(tag=tag, path="static/favicon.ico"), ico_path):
+        if http_download(tpl.format(tag=tag, path="static/favicon.ico"), ico_path,
+                         expect=b"\x00\x00\x01\x00"):
             ok2 = True
             break
     return py_path, html_path, (logo_path if ok else None), (ico_path if ok2 else None)

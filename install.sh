@@ -21,7 +21,7 @@ set -Eeuo pipefail
 
 # ------------------------------ 常量 ------------------------------
 readonly SCRIPT_NAME="FW-Panel VPS控制面板安装包"
-readonly SCRIPT_VERSION="1.24.44"
+readonly SCRIPT_VERSION="1.24.45"
 readonly LOG_FILE="/var/log/fwpanel-install.log"
 readonly APP_DIR="/usr/local/lib/fwpanel"
 readonly ETC_DIR="/etc/fwpanel"
@@ -157,16 +157,16 @@ check_existing() {
 }
 
 do_upgrade() {
-    local tmpdir base_url tag
+    local tmpdir tag
     tmpdir=$(mktemp -d)
     tag="$(src_tag)"
-    base_url="https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag"
     if [ -n "$VERSION_TAG" ]; then
         log_info "下载指定版本 $tag ..."
     else
         log_info "下载最新版本...（源: $tag）"
     fi
-    if ! curl -fsSL "$base_url/panel.py" -o "$tmpdir/panel.py" 2>/dev/null || [ ! -s "$tmpdir/panel.py" ]; then
+    # 三级源回退 + 内容头校验（防镜像返回 HTML 错误页）
+    if ! fetch_source "$tmpdir/panel.py" "panel.py"; then
         log_err "下载 panel.py 失败，请检查服务器网络后重试"
         rm -rf "$tmpdir"
         exit 1
@@ -185,9 +185,9 @@ do_upgrade() {
     elif [ -n "$VERSION_TAG" ] && [ -n "$new_ver" ]; then
         log_info "指定版本安装 v$cur_ver → v$new_ver（允许降级）"
     fi
-    curl -fsSL "$base_url/static/index.html" -o "$tmpdir/index.html" 2>/dev/null || true
-    curl -fsSL "$base_url/static/github-logo.png" -o "$tmpdir/github-logo.png" 2>/dev/null || true
-    curl -fsSL "$base_url/install.sh" -o "$tmpdir/install.sh" 2>/dev/null || true
+    fetch_source "$tmpdir/index.html" "static/index.html" || log_warn "下载 index.html 失败（保留现有页面）"
+    fetch_source "$tmpdir/github-logo.png" "static/github-logo.png" || true
+    fetch_source "$tmpdir/install.sh" "install.sh" || true
     # 备份当前版本（保留最近 3 份）
     local bak
     bak="$APP_DIR/panel.py.bak.$(date +%Y%m%d%H%M%S)"
@@ -360,9 +360,17 @@ install_deps() {
 }
 
 download_file() {
-    local dest="$1" url="$2"
+    local dest="$1" url="$2" expect_hex="${3:-}"
     curl -fsSL --connect-timeout 10 --retry 2 -o "$dest" "$url" || return 1
     [ -s "$dest" ] || return 1
+    # 内容头校验（hex 前缀）：镜像返回 HTML 错误页时拒绝，防止覆盖真实文件
+    if [ -n "$expect_hex" ]; then
+        local nbytes=$(( ${#expect_hex} / 2 ))
+        local head_hex
+        head_hex="$(head -c "$nbytes" "$dest" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+        [ "$head_hex" = "$expect_hex" ] || return 1
+    fi
+    return 0
 }
 
 # 下载源 tag：--version 指定时用该版本（自动补 v 前缀），否则 main 最新
@@ -375,14 +383,20 @@ src_tag() {
 }
 
 fetch_source() {
-    # 三级源自动回退：GitHub raw → jsDelivr CDN → ghproxy 镜像（国内友好）
-    local dest="$1" path="$2" tag
+    # 三级源自动回退：GitHub raw → jsDelivr CDN → ghproxy 镜像（国内友好）+ 内容头校验
+    local dest="$1" path="$2" tag expect_hex=""
     tag="$(src_tag)"
-    download_file "$dest" "https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag/$path" && return 0
+    case "$path" in
+        *.py)   expect_hex="2321" ;;                        # #!
+        *.html) expect_hex="3c21444f43545950452068746d6c3e0a3c68746d6c206c616e673d227a682d434e223e" ;;  # <!DOCTYPE html>\n<html lang="zh-CN">
+        *.png)  expect_hex="89504e47" ;;                    # \x89PNG
+        *.ico)  expect_hex="00000100" ;;                    # ico 头
+    esac
+    download_file "$dest" "https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag/$path" "$expect_hex" && return 0
     log_warn "GitHub 直连失败，切换 jsDelivr CDN ..."
-    download_file "$dest" "https://cdn.jsdelivr.net/gh/jacksonchowspare/fwpanel@$tag/$path" && return 0
-    log_warn "jsDelivr 失败，切换 ghproxy 镜像 ..."
-    download_file "$dest" "https://ghproxy.com/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag/$path" && return 0
+    download_file "$dest" "https://cdn.jsdelivr.net/gh/jacksonchowspare/fwpanel@$tag/$path" "$expect_hex" && return 0
+    log_warn "jsDelivr 失败，切换 ghproxy.net 镜像 ..."
+    download_file "$dest" "https://ghproxy.net/https://raw.githubusercontent.com/jacksonchowspare/fwpanel/$tag/$path" "$expect_hex" && return 0
     return 1
 }
 

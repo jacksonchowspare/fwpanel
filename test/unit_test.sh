@@ -87,7 +87,7 @@ head -n -1 "$SCRIPT" | sed 's|readonly APP_DIR="/usr/local/lib/fwpanel"|readonly
 bash -c 'source /tmp/install_funcs_dg.sh
 curl() {
   if [[ "$*" == *"/panel.py"* && "$*" == *"-o"* ]]; then
-    echo '\''CURRENT_VERSION = "1.23.19"'\'' > "$(echo "$*" | grep -oP "(?<=-o )\S+")"
+    printf "#!/usr/bin/env python3\nCURRENT_VERSION = \"1.23.19\"\n" > "$(echo "$*" | grep -oP "(?<=-o )\S+")"
     return 0
   fi
   return 1

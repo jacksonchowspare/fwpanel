@@ -1363,6 +1363,43 @@ class TestUpgrade(unittest.TestCase):
         self.assertFalse(panel.version_gt("1.2.0", "1.2.0"))
         self.assertFalse(panel.version_gt("1.1.3", "1.2.0"))
 
+    def test_http_download_expect(self):
+        """http_download 内容头校验：镜像返回的 HTML 错误页被拒绝，正确内容正常写入"""
+        class FakeResp:
+            def __init__(self, data):
+                self._d = data
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def read(self):
+                return self._d
+        saved = panel.urllib.request.urlopen
+        try:
+            # 错误页（GitHub 404 HTML）不符合 index.html 专属前缀 → 拒绝且不写文件
+            panel.urllib.request.urlopen = lambda url, timeout=15: FakeResp(
+                b"<!DOCTYPE html>\n<html lang=\"en\"><title>GitHub</title>404</html>")
+            dest = os.path.join(TMP, "expect-bad.html")
+            self.assertFalse(panel.http_download("http://x/", dest,
+                             expect=b'<!DOCTYPE html>\n<html lang="zh-CN">'))
+            self.assertFalse(os.path.exists(dest))
+            # 正确前缀 → 写入成功
+            panel.urllib.request.urlopen = lambda url, timeout=15: FakeResp(
+                b'<!DOCTYPE html>\n<html lang="zh-CN">\n<title>FW-Panel</title>')
+            dest2 = os.path.join(TMP, "expect-ok.html")
+            self.assertTrue(panel.http_download("http://x/", dest2,
+                            expect=b'<!DOCTYPE html>\n<html lang="zh-CN">'))
+            self.assertTrue(os.path.exists(dest2))
+            # panel.py 前缀 #!
+            dest3 = os.path.join(TMP, "expect-ok.py")
+            panel.urllib.request.urlopen = lambda url, timeout=15: FakeResp(
+                b"#!/usr/bin/env python3\nCURRENT_VERSION = \"1.24.44\"\n")
+            self.assertTrue(panel.http_download("http://x/", dest3, expect=b"#!"))
+            panel.urllib.request.urlopen = lambda url, timeout=15: FakeResp(b"<html>bad</html>")
+            self.assertFalse(panel.http_download("http://x/", dest3, expect=b"#!"))
+        finally:
+            panel.urllib.request.urlopen = saved
+
     def test_ssh_service_name(self):
         """SSH 服务名检测：有 ssh.service 用 ssh，否则 sshd"""
         import subprocess as sp
