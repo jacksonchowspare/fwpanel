@@ -1,6 +1,6 @@
 # FW-Panel · 简易VPS控制面板
 
-轻量易用的 Linux VPS 控制面板：**Python 标准库 + nftables**，零第三方 Python 依赖，不依赖 firewalld / ufw 等外部组件。装完即可通过网页管理防火墙规则、Docker 容器、反向代理与 SSL 证书、SSH 防护与网络优化。
+轻量易用的 Linux VPS 控制面板：**Python 标准库 + nftables**，零第三方 Python 依赖，不依赖 firewalld / ufw 等外部组件。装完即可通过网页管理防火墙规则、Docker 容器、反向代理与 SSL 证书、网卡流量统计、SSH 防护与网络优化。
 
 ## 支持系统
 
@@ -37,6 +37,7 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 | `--user NAME` | 指定用户名（默认随机 8 位） |
 | `--password PASS` | 指定密码，≥8 位（默认随机 16 位强密码） |
 | `--open-port P` | 安装后立即放行端口（逗号分隔，如 `80,443` 或 `53/udp`） |
+| `--version V` | **指定安装/升级到某版本**（如 `v1.24.42`，自动补 v 前缀；留空 = main 最新；显式指定版本允许降级，用于回退） |
 | `--check` | 仅体检环境 |
 | `--change-password` | 重置面板密码（交互式） |
 | `--uninstall` | 卸载（停服务 + 删文件） |
@@ -49,7 +50,15 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 
 # 指定凭据 + 安装后放行 80/443
 curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash -s -- --user admin --password MyPass123 --open-port 80,443
+
+# 一键回退到指定版本（如新版有问题，回退 v1.24.42；配置/规则全保留）
+curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash -s -- --version v1.24.42
+
+# 恢复最新版（去掉 --version 即可）
+curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash
 ```
+
+> `--version` 下载源同样走「GitHub raw → jsDelivr → ghproxy.net → ghfast.top → gh-proxy.com」五级回退 + 内容头校验，国内网络也能稳定回退。
 
 ## 功能特性
 
@@ -64,6 +73,12 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 - **防火墙一键开关**：关闭 = 删除 nftables 表（规则保留），开启 = 一键恢复
 - **一键开启 BBR**：官方原版方案（fq + bbr），配置持久化 + 立即生效 + 回读校验；内核版本与支持状态检测（兼容模块化内核）
 - **IPv6 设置**：IPv4 优先（gai.conf precedence）/ 禁用 IPv6 / 开启 IPv6，sysctl 持久化 + 立即生效
+
+### 网卡流量统计
+- **实时速率**：↑ 上行 / ↓ 下行，30 秒自动刷新
+- **今日 / 昨日** 流量 + **近 7 天明细表**（日期 / 上行 / 下行 / 合计，今天高亮）+ **总累计流量**
+- **自定义日期区间**：开始 + 结束双日期（自绘深色日历面板，手机自适应），只选开始日期 = 从该日到今天，支持区间累计查询
+- 自动识别活跃网卡（实时速率非零 > 今日有流量 > 主网卡兜底），支持手动切换；数据按天持久化（重启不丢，计数器回退不产生负值）
 
 ### Docker 容器管理
 - **一键安装**：自动识别 apt / pacman / dnf 安装 Docker + Compose 并启动服务，**国外直连 / 国内镜像源双按钮**任选
@@ -85,18 +100,28 @@ curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/instal
 - **修改面板端口自动联动**：指向旧面板端口的反代目标端口自动同步，域名访问不受影响
 
 ### 面板体验
+- **分组导航标签**：状态卡下方吸顶标签栏（流量统计 / 防火墙 / SSH 安全 / 反代证书 / Docker），点击切换分组，**记住上次选择**；状态卡常驻始终可见，手机端标签自动换行
+- **白天 / 黑夜主题切换**：一键切换整个面板配色（全部颜色变量化，深浅两套主题），选择自动记忆；登录页右下角也有悬浮切换按钮
+- **网卡流量统计 / 反代 / 证书 / Docker 全模块单色图标**：统一 stroke 风格 SVG，跟随主题颜色，界面清爽
 - **手机/平板自适应**：紧凑布局、表格横向滚动、弹窗适配屏幕、iOS 聚焦缩放自动复位
 - **玻璃拟态主题**：卡片半透明 + 背景光晕 + 按钮渐变动效（可读性优先，输入框保持实底）
 - **登录页**：底部显示当前版本号（自动注入）+ GitHub 项目链接（图标本地化内嵌）
 - **重启面板**：右上角一键重启服务，自动重连
 - **账户设置**：修改用户名 + 密码（双次确认）
-- **系统更新**：自动检测新版本（GitHub API 重试 + jsDelivr 兜底）+ 一键升级（下载→校验→备份→替换→失败回滚）
+- **系统更新**：自动检测新版本（GitHub API 重试 + jsDelivr 兜底）+ 一键升级（五级下载源自动回退 + **下载内容头校验**——镜像返回错误页时自动换源或中止，绝不覆盖现有文件）
 - 所有操作确认框统一面板风格（无系统弹窗）
 
-## 升级
+## 升级 / 回退
 
 - 面板内「🔄 系统更新」→ 一键升级
 - 或 SSH 重跑一键安装命令（自动升级模式，保留全部配置，防降级）
+- **回退到指定版本**（新版有问题时一键回退）：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/jacksonchowspare/fwpanel/main/install.sh | sudo bash -s -- --version v1.24.42
+```
+
+> 指定版本安装会跳过防降级保护（显式指定 = 有意回退）；升级/回退下载均带内容头校验，失败自动切源，不会把错误页写入面板导致白屏。
 
 ## 卸载
 
