@@ -236,6 +236,13 @@ tr:hover td { background: #1d2733; }
         <select id="tr_iface" style="width:auto;min-width:90px" onchange="trSwitchIface()"></select>
         <span id="tr_rate" style="color:var(--muted);font-size:12px">实时：↑ - ↓ -</span>
       </div>
+      <div style="border-top:1px dashed var(--border);margin-bottom:12px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">🗓 自定义起始日期统计</div>
+      <div class="form-row" style="align-items:center;gap:8px;margin-bottom:12px">
+        <input type="date" id="tr_from" style="width:auto">
+        <button class="btn mini" onclick="trQuery()">查询</button>
+        <span id="tr_custom" style="color:var(--muted);font-size:12px">选择起始日期后查询累计上下行流量</span>
+      </div>
       <div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:12px">
         <div>
           <div style="color:var(--muted);font-size:12px">今日</div>
@@ -253,13 +260,6 @@ tr:hover td { background: #1d2733; }
           <thead><tr><th>日期</th><th>上行</th><th>下行</th><th>合计</th></tr></thead>
           <tbody id="tr_week"></tbody>
         </table>
-      </div>
-      <div style="border-top:1px dashed var(--border);margin:12px 0"></div>
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px">🗓 自定义起始日期统计</div>
-      <div class="form-row" style="align-items:center;gap:8px">
-        <input type="date" id="tr_from" style="width:auto">
-        <button class="btn mini" onclick="trQuery()">查询</button>
-        <span id="tr_custom" style="color:var(--muted);font-size:12px">选择起始日期后查询累计上下行流量</span>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📈 总累计流量</div>
