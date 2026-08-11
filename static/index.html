@@ -130,16 +130,12 @@ h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accen
 td .btn.mini + .btn.mini { margin-left: 6px; }
 .btn:disabled { opacity: .4; cursor: not-allowed; transform: none !important; box-shadow: none !important; filter: none !important; }
 input, select, textarea { background: #0d1218; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none; }
-/* 日期选择框美化（原生 date input 深色主题适配） */
-input[type="date"] { position: relative; padding: 5px 30px 5px 10px; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
-input[type="date"]::-webkit-calendar-picker-indicator {
-  background: none; width: 15px; height: 15px; border-radius: 4px;
-  filter: invert(.72); opacity: .75; cursor: pointer;
-  transition: opacity .15s ease, transform .15s ease;
-}
-input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; transform: scale(1.18); filter: invert(.9); }
-input[type="date"]:hover { border-color: rgba(255,255,255,.22); }
-input[type="date"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(61,139,253,.18); }
+/* 自绘日期选择面板：日期格样式 */
+#tr_cal .cal_day { height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background .12s ease; }
+#tr_cal .cal_day:hover { background: rgba(61,139,253,.18); }
+#tr_cal .cal_day.today { border: 1px solid var(--accent); }
+#tr_cal .cal_day.sel { background: var(--accent); color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(61,139,253,.35); }
+#tr_cal .cal_day.blank { cursor: default; border: none; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 input::placeholder, textarea::placeholder { color: #5c6b7e; }
 .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
@@ -246,9 +242,9 @@ tr:hover td { background: #1d2733; }
         <select id="tr_iface" style="width:auto;min-width:90px" onchange="trSwitchIface()"></select>
         <span id="tr_rate" style="color:var(--muted);font-size:12px">实时：↑ - ↓ -</span>
         <span style="color:var(--muted);font-size:12px;margin-left:24px">🗓 自定义日期</span>
-        <input type="date" id="tr_from" style="width:auto">
+        <input type="text" id="tr_from" readonly placeholder="选择开始日期" onclick="trCal.open(event,'tr_from')" style="width:118px;cursor:pointer">
         <span style="color:var(--muted);font-size:12px">至</span>
-        <input type="date" id="tr_to" style="width:auto">
+        <input type="text" id="tr_to" readonly placeholder="选择结束日期" onclick="trCal.open(event,'tr_to')" style="width:118px;cursor:pointer">
         <button class="btn mini" onclick="trQuery()">查询</button>
         <span id="tr_custom" style="color:var(--muted);font-size:12px">选择起止日期后查询区间累计上下行流量</span>
       </div>
@@ -274,6 +270,23 @@ tr:hover td { background: #1d2733; }
       <div style="border-top:1px dashed var(--border);margin:12px 0"></div>
       <div style="font-size:13px;font-weight:600;margin-bottom:8px">📈 总累计流量</div>
       <div id="tr_total" style="color:var(--muted);font-size:12px">加载中...</div>
+    </div>
+
+    <!-- 流量统计：自绘日期选择面板（深色主题） -->
+    <div id="tr_cal" style="display:none;position:fixed;z-index:9999;width:252px;max-width:calc(100vw - 24px);background:#141b26;border:1px solid rgba(255,255,255,.12);border-radius:10px;box-shadow:0 10px 36px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <button class="btn mini ghost" onclick="trCal.month(-1)">◀</button>
+        <span id="tr_cal_title" style="font-size:13px;font-weight:600"></span>
+        <button class="btn mini ghost" onclick="trCal.month(1)">▶</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);text-align:center;color:var(--muted);font-size:11px;margin-bottom:4px">
+        <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+      </div>
+      <div id="tr_cal_grid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn mini" style="flex:1" onclick="trCal.today()">今天</button>
+        <button class="btn mini ghost" style="flex:1" onclick="trCal.clear()">清除</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -966,6 +979,76 @@ async function trQuery() {
     }
   } catch (e) { toast(e.message, "err"); }
 }
+
+/* ---------- 自绘日期选择面板（深色主题，替代原生 date picker） ---------- */
+const trCal = {
+  target: null, y: 0, m: 0,
+  open(ev, id) {
+    this.target = id;
+    const el = $(id);
+    const v = el.value;
+    const d = v ? new Date(v + "T00:00:00") : new Date();
+    this.y = d.getFullYear(); this.m = d.getMonth();
+    this.render();
+    const r = el.getBoundingClientRect();
+    const cal = $("tr_cal");
+    const w = cal.offsetWidth || 252;
+    cal.style.left = Math.max(4, Math.min(r.left, window.innerWidth - w - 4)) + "px";
+    cal.style.top = (r.bottom + 6) + "px";
+    cal.style.display = "block";
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+  },
+  close() { $("tr_cal").style.display = "none"; },
+  month(delta) {
+    this.m += delta;
+    if (this.m < 0) { this.m = 11; this.y--; }
+    if (this.m > 11) { this.m = 0; this.y++; }
+    this.render();
+  },
+  render() {
+    $("tr_cal_title").textContent = this.y + " 年 " + (this.m + 1) + " 月";
+    const grid = $("tr_cal_grid");
+    grid.innerHTML = "";
+    const startDow = (new Date(this.y, this.m, 1).getDay() + 6) % 7; // 周一开始
+    const dim = new Date(this.y, this.m + 1, 0).getDate();
+    const now = new Date();
+    const sel = $(this.target).value || "";
+    for (let i = 0; i < startDow; i++) {
+      const b = document.createElement("div");
+      b.className = "cal_day blank";
+      grid.appendChild(b);
+    }
+    for (let d = 1; d <= dim; d++) {
+      const ds = this.y + "-" + String(this.m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+      const c = document.createElement("div");
+      c.className = "cal_day"
+        + (now.getFullYear() === this.y && now.getMonth() === this.m && now.getDate() === d ? " today" : "")
+        + (sel === ds ? " sel" : "");
+      c.textContent = d;
+      const tg = this.target, val = ds;
+      c.onclick = () => { $(tg).value = val; this.close(); };
+      grid.appendChild(c);
+    }
+  },
+  today() {
+    if (!this.target) return;
+    const t = new Date();
+    const ds = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+    $(this.target).value = ds;
+    this.close();
+  },
+  clear() {
+    if (this.target) $(this.target).value = "";
+    this.close();
+  }
+};
+document.addEventListener("click", (e) => {
+  const cal = $("tr_cal");
+  if (cal.style.display === "none") return;
+  const t = e.target;
+  if (t.closest && (t.closest("#tr_cal") || t.closest("#tr_from") || t.closest("#tr_to"))) return;
+  trCal.close();
+});
 
 async function loadBbr() {
   try {
