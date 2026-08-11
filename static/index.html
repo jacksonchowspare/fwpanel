@@ -273,11 +273,11 @@ tr:hover td { background: var(--panel-solid); }
     </div>
 
     <div class="tabs" id="sec_tabs">
-      <button class="tab active" data-tab="overview" onclick="switchTab('overview')">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4"/></svg> 概览</button>
-      <button class="tab" data-tab="fw" onclick="switchTab('fw')">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/></svg> 防火墙</button>
-      <button class="tab" data-tab="ssh" onclick="switchTab('ssh')">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> SSH 安全</button>
-      <button class="tab" data-tab="px" onclick="switchTab('px')">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg> 反代证书</button>
-      <button class="tab" data-tab="dk" onclick="switchTab('dk')">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg> Docker</button>
+      <button class="tab active" data-tab="overview" onclick="switchTab('overview')"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4"/></svg> 概览</button>
+      <button class="tab" data-tab="fw" onclick="switchTab('fw')"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/></svg> 防火墙</button>
+      <button class="tab" data-tab="ssh" onclick="switchTab('ssh')"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> SSH 安全</button>
+      <button class="tab" data-tab="px" onclick="switchTab('px')"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg> 反代证书</button>
+      <button class="tab" data-tab="dk" onclick="switchTab('dk')"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg> Docker</button>
     </div>
     <div class="panel" data-sec="overview">
       <h2><svg class="h-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18M7 20v-6M12 20V7M17 20v-9"/></svg> 网卡流量统计</h2>
@@ -304,14 +304,14 @@ tr:hover td { background: var(--panel-solid); }
         </div>
       </div>
       <div style="border-top:1px dashed var(--border);margin-bottom:12px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg> 每天上下行（近 7 天）</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg> 每天上下行（近 7 天）</div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>日期</th><th>上行</th><th>下行</th><th>合计</th></tr></thead>
           <tbody id="tr_week"></tbody>
         </table>
       </div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin:12px 0 8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg> 总累计流量</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin:12px 0 8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg> 总累计流量</div>
       <div id="tr_total" style="color:var(--muted);font-size:12px">加载中...</div>
     </div>
 
@@ -340,7 +340,7 @@ tr:hover td { background: var(--panel-solid); }
         <span style="color:var(--muted);font-size:12px;align-self:center">自动按系统选择 apt / pacman / dnf，安装后自动写入 nginx 配置（需几分钟，期间页面等待属正常）</span>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> 添加反向代理</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> 添加反向代理</div>
       <div id="add_proxy_row">
         <input id="px_domain" placeholder="域名（如 app.example.com）">
         <input id="px_host" placeholder="目标 IP/主机">
@@ -379,7 +379,7 @@ tr:hover td { background: var(--panel-solid); }
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:12px">certbot webroot 模式：需 80 端口公网可达、域名已解析到本机、nginx 已安装（未装可先在反向代理模块一键安装）</div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg> 已申请证书</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg> 已申请证书</div>
       <div class="table-wrap">
       <table>
         <thead><tr><th>域名</th><th>有效期</th><th>操作</th></tr></thead>
@@ -403,7 +403,7 @@ tr:hover td { background: var(--panel-solid); }
         <div style="color:var(--muted);font-size:12px;margin-top:6px">国内镜像安装：Debian/Ubuntu 使用阿里云 docker-ce 源（docker-ce 全家桶），适合国内服务器官方源连接慢的场景</div>
       </div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg> 容器列表</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg> 容器列表</div>
       <div class="form-row" style="margin-bottom:8px">
         <input id="dk_search" placeholder="搜索容器名/镜像/状态" style="flex:1;min-width:160px" oninput="renderDocker()">
         <button class="btn ghost" onclick="refreshDocker()">刷新</button>
@@ -420,7 +420,7 @@ tr:hover td { background: var(--panel-solid); }
         <button class="btn mini ghost" onclick="dkPageGo(1)" id="dk_next">下一页</button>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> 创建容器</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> 创建容器</div>
       <div class="form-row" style="margin-bottom:8px">
         <input id="dk_name" placeholder="容器名称" style="flex:1;min-width:120px">
         <input id="dk_image" placeholder="镜像（如 nginx:latest）" style="flex:1;min-width:160px">
@@ -430,7 +430,7 @@ tr:hover td { background: var(--panel-solid); }
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:12px">端口映射格式：宿主机端口:容器端口（如 8080:80）；环境变量格式：KEY=值，多个用逗号分隔。创建时自动挂载数据卷 /DockerData/dockerrun/&lt;容器名&gt;:/data</div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M3 18l5-5 4 4 4-4 5 5"/></svg> 镜像管理</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M3 18l5-5 4 4 4-4 5 5"/></svg> 镜像管理</div>
       <div class="form-row" style="margin-bottom:8px">
         <input id="dk_pull_name" placeholder="镜像名:tag（如 nginx:latest）" style="flex:1;min-width:200px">
         <button class="btn" onclick="pullDocker()">拉取镜像</button>
@@ -446,7 +446,7 @@ tr:hover td { background: var(--panel-solid); }
         <button class="btn ghost" onclick="pruneDockerImages()">清理未使用镜像</button>
       </div>
       <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> 存储目录</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> 存储目录</div>
       <div class="form-row" style="margin-bottom:8px">
         <button class="btn" onclick="createDockerDirs()">一键创建存储目录</button>
         <span style="color:var(--muted);font-size:12px" id="dk_dirs_status">检测中...</span>
@@ -458,7 +458,7 @@ tr:hover td { background: var(--panel-solid); }
         <span style="color:var(--muted);font-size:12px" id="dk_dataroot_status">检测中...</span>
       </div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4"/></svg> Docker Compose</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4"/></svg> Docker Compose</div>
       <textarea id="dk_compose" placeholder="粘贴 docker-compose.yml 内容..." style="width:100%;min-height:120px;font-family:monospace;font-size:12px;box-sizing:border-box;margin-bottom:8px"></textarea>
       <div class="form-row" style="margin-bottom:8px">
         <input id="dk_compose_folder" placeholder="文件夹名称（留空自动取第一个镜像名，多镜像时建议填写）" style="flex:1;min-width:200px">
@@ -467,12 +467,12 @@ tr:hover td { background: var(--panel-solid); }
       </div>
       <div style="color:var(--muted);font-size:12px;margin-bottom:8px">文件将保存到 /DockerData/dockercompose/&lt;文件夹名称&gt;/docker-compose.yml；留空时自动按 yml 里第一个镜像名命名（如 nginx:latest → nginx）</div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4"/></svg> 已保存的 Compose 项目</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4"/></svg> 已保存的 Compose 项目</div>
       <div id="dk_compose_list" style="margin-bottom:8px">
         <div style="color:var(--muted);font-size:12px">暂无已保存项目</div>
       </div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
-      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18M7 20v-6M12 20V7M17 20v-9"/></svg> 资源监控</div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18M7 20v-6M12 20V7M17 20v-9"/></svg> 资源监控</div>
       <div class="form-row" style="margin-bottom:8px">
         <span style="color:var(--muted);font-size:12px" id="dk_stats_hint">运行中容器实时 CPU / 内存 / 网络 IO</span>
         <button class="btn ghost" onclick="loadDockerStats()">刷新监控</button>
@@ -542,14 +542,14 @@ tr:hover td { background: var(--panel-solid); }
             保护规则永远存在防锁死；切换端口时旧端口会临时放行，检测到新端口连接后自动清理旧规则
           </div>
           <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-          <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:6px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> 面板端口</div>
+          <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:6px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> 面板端口</div>
           <div class="form-row" style="margin-bottom:6px">
             <input id="panel_port_input" placeholder="端口" style="width:90px" inputmode="numeric">
             <button class="btn" onclick="setPanelPort()">修改面板端口</button>
           </div>
           <div style="color:var(--muted);font-size:12px;margin-bottom:14px">改后自动删除旧端口放行并放行新端口、重启服务；通过反代域名访问时目标端口自动同步，无需手动调整</div>
           <div style="border-top:1px dashed var(--border);margin:12px 0 10px"></div>
-          <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:6px">><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> SSH 白名单</div>
+          <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:6px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> SSH 白名单</div>
           <div style="color:var(--muted);font-size:12px;margin-bottom:6px">仅允许以下 IP/CIDR 访问 SSH 端口（留空 = 所有 IP 可访问）</div>
           <div class="form-row" style="margin-bottom:8px">
             <input id="ssh_allow_input" placeholder="IP/CIDR，如 1.2.3.4 或 5.6.7.0/24" style="flex:1;min-width:180px">
