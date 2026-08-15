@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.59"
+CURRENT_VERSION = "1.24.60"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1137,6 +1137,109 @@ def procs_snapshot():
     for p in procs:
         p["cmdline"] = procs_cmdline(p["pid"])
     return {"ok": True, "procs": procs}
+
+
+# ------------------------------- 进程流量历史（按天累计） -------------------------------
+
+PROCS_FILE = os.environ.get("FW_PROCS_FILE", os.path.join(BASE_DIR, "procs.json"))
+PROCS_ACCUM_MAX_DT = 600  # 相邻采样间隔超过 10 分钟不累计（防瞬时进程虚报流量）
+
+
+class ProcStore:
+    """进程流量历史存储：procs.json = {"days": {date: {name: {"rx","tx","last_seen","last_pid"}}}, "last_ts": N}
+
+    - 进程按**名称**为主键（PID 会变化/被复用），名单跨天、跨重启保留
+    - 流量估算：每次采样（手动刷新）速率 × 距上次采样间隔，累计到当天
+    - last_ts 为空 / 间隔 > PROCS_ACCUM_MAX_DT 时只更新最后活跃不累计
+    """
+
+    def __init__(self, path=None):
+        self.path = path or PROCS_FILE
+        self.data = {"days": {}, "last_ts": None}
+        self.load()
+
+    def load(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                self.data = json.load(f)
+        except (OSError, ValueError):
+            self.data = {"days": {}, "last_ts": None}
+        if not isinstance(self.data.get("days"), dict):
+            self.data["days"] = {}
+        if "last_ts" not in self.data:
+            self.data["last_ts"] = None
+
+    def save(self):
+        tmp = self.path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass  # 磁盘不可写不阻断面板
+
+    def record(self, procs, now=None):
+        """procs = 本次采样 [{name, pid, rx, tx, ...}]（rx/tx 为 B/s 速率）"""
+        now = now if now is not None else time.time()
+        last = self.data.get("last_ts")
+        do_accum = last is not None and 0 < (now - last) <= PROCS_ACCUM_MAX_DT
+        dt = (now - last) if (last is not None and do_accum) else 0
+        day = self.data["days"].setdefault(datetime.date.today().isoformat(), {})
+        for p in procs:
+            name = (p.get("name") or "").strip()
+            if not name:
+                continue
+            slot = day.setdefault(name, {"rx": 0, "tx": 0, "last_seen": 0, "last_pid": None})
+            if do_accum:
+                slot["rx"] += float(p.get("rx") or 0) * dt
+                slot["tx"] += float(p.get("tx") or 0) * dt
+            slot["last_seen"] = now
+            slot["last_pid"] = p.get("pid")
+        self.data["last_ts"] = now
+        self.save()
+
+    def history(self):
+        """历史进程汇总（跨天合并）：[{name, last_seen, last_pid, today_rx, today_tx, total_rx, total_tx}]，按最后活跃降序"""
+        today = datetime.date.today().isoformat()
+        agg = {}
+        for date_str, day in self.data["days"].items():
+            for name, slot in day.items():
+                a = agg.setdefault(name, {"name": name, "last_seen": 0, "last_pid": None,
+                                          "today_rx": 0, "today_tx": 0,
+                                          "total_rx": 0, "total_tx": 0})
+                a["total_rx"] += slot.get("rx", 0)
+                a["total_tx"] += slot.get("tx", 0)
+                if date_str == today:
+                    a["today_rx"] += slot.get("rx", 0)
+                    a["today_tx"] += slot.get("tx", 0)
+                if slot.get("last_seen", 0) > a["last_seen"]:
+                    a["last_seen"] = slot["last_seen"]
+                    a["last_pid"] = slot.get("last_pid")
+        out = list(agg.values())
+        out.sort(key=lambda x: x["last_seen"], reverse=True)
+        return out
+
+    def detail(self, name):
+        """某进程近 7 天每天流量 + 总累计"""
+        days = []
+        today = datetime.date.today()
+        for i in range(6, -1, -1):
+            d = (today - datetime.timedelta(days=i)).isoformat()
+            slot = self.data["days"].get(d, {}).get(name, {})
+            days.append({"date": d, "rx": slot.get("rx", 0), "tx": slot.get("tx", 0)})
+        total_rx = total_tx = 0
+        for date_str, day in self.data["days"].items():
+            slot = day.get(name)
+            if slot:
+                total_rx += slot.get("rx", 0)
+                total_tx += slot.get("tx", 0)
+        return {"name": name, "days": days, "total_rx": total_rx, "total_tx": total_tx}
+
+    def clear(self):
+        """清空全部历史（保留当前存储文件）"""
+        self.data = {"days": {}, "last_ts": None}
+        self.save()
 
 
 # ------------------------------- 反向代理（Nginx） -------------------------------
@@ -2574,6 +2677,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_bbr_enable()
         elif path == "/api/procs/install":
             self._api_procs_install()
+        elif path == "/api/procs/clear":
+            self._api_procs_clear()
         elif path == "/api/ipv6":
             self._api_ipv6()
         elif path == "/api/restart":
@@ -3226,14 +3331,26 @@ class PanelHandler(BaseHTTPRequestHandler):
         self._send(200, resp)
 
     def _api_procs(self):
-        """进程流量统计：GET /api/procs
-        返回 {installed, ok, error, procs, ts}；采样约 1-2 秒"""
+        """进程流量统计：GET /api/procs?detail=<进程名>
+        返回 {installed, ok, error, procs, ts, history}；
+        带 detail 参数时返回 {detail: {name, days: 近7天, total_rx, total_tx}}；
+        采样约 2-3 秒"""
         token = self._require_auth()
         if token is None:
             return
+        store = getattr(self.server, "procs", None) or ProcStore()
         resp = procs_snapshot()
         resp["installed"] = nethogs_available()
         resp["ts"] = int(time.time())
+        if resp.get("ok"):
+            store.record(resp["procs"])
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        detail_name = (qs.get("detail") or [""])[0].strip()
+        if detail_name:
+            resp["detail"] = store.detail(detail_name)
+        else:
+            resp["history"] = store.history()
         self._send(200, resp)
 
     def _api_procs_install(self):
@@ -3246,6 +3363,15 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "msg": msg, "installed": nethogs_available()})
         else:
             self._send(500, {"error": msg})
+
+    def _api_procs_clear(self):
+        """清空进程流量历史：POST /api/procs/clear"""
+        token = self._require_auth()
+        if token is None:
+            return
+        store = getattr(self.server, "procs", None) or ProcStore()
+        store.clear()
+        self._send(200, {"ok": True, "msg": "进程历史已清空"})
 
     def _api_bbr(self):
         """查询 BBR 状态与内核版本"""
@@ -4035,6 +4161,9 @@ def main():
     server.traffic = traffic
     threading.Thread(target=traffic_loop, args=(traffic,), daemon=True).start()
     log("网卡流量统计线程已启动")
+    # 进程流量历史存储（按天累计，跨重启保留）
+    server.procs = ProcStore()
+    log("进程流量历史存储已加载")
 
     # 启动时应用一次规则（保证面板规则生效）
     ok, msg = nft.apply()

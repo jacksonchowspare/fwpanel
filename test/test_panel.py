@@ -2732,6 +2732,9 @@ TOTAL: 0.118359 0.139062
         cls.auth = panel.Auth(cls.cfg)
         cls.server = panel.PanelServer(("127.0.0.1", 17996), panel.PanelHandler,
                                        cls.cfg, cls.store, cls.nft, cls.auth)
+        cls.tmp = tempfile.mkdtemp(prefix="fwpanel-procs-")
+        cls.pstore = panel.ProcStore(os.path.join(cls.tmp, "procs.json"))
+        cls.server.procs = cls.pstore  # 挂载（与 main serve 相同）
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         cls.base = "http://127.0.0.1:17996"
@@ -2740,6 +2743,7 @@ TOTAL: 0.118359 0.139062
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
+        shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def _req(self, method, path, data=None, token=None):
         req = urllib.request.Request(self.base + path, method=method)
@@ -2903,6 +2907,126 @@ TOTAL: 0.118359 0.139062
         """未登录访问 /api/procs → 401"""
         code, d = self._req("GET", "/api/procs")
         self.assertEqual(code, 401)
+
+    # ---------- ProcStore（进程历史按天累计） ----------
+
+    def _new_store(self):
+        return panel.ProcStore(os.path.join(self.tmp, "t-" + str(id(self)) + ".json"))
+
+    def test_store_first_sample_no_accum(self):
+        """首次采样只记 last_seen 不累计（无上次时间基准）"""
+        ps = self._new_store()
+        ps.record([{"name": "curl", "pid": 1, "rx": 100, "tx": 200}], now=1000.0)
+        day = list(ps.data["days"].values())[0]
+        slot = day["curl"]
+        self.assertEqual(slot["rx"], 0)    # 首次不累计流量
+        self.assertEqual(slot["tx"], 0)
+        self.assertEqual(slot["last_seen"], 1000.0)  # 但记录最后活跃
+        self.assertEqual(slot["last_pid"], 1)
+        self.assertEqual(ps.data["last_ts"], 1000.0)
+
+    def test_store_accumulates_rate_times_dt(self):
+        """第二次采样：速率 × 间隔累计到当天"""
+        ps = self._new_store()
+        ps.record([{"name": "curl", "pid": 1, "rx": 0, "tx": 0}], now=1000.0)
+        ps.record([{"name": "curl", "pid": 1, "rx": 100, "tx": 200}], now=1010.0)
+        day = list(ps.data["days"].values())[0]
+        slot = day["curl"]
+        self.assertEqual(slot["rx"], 1000)   # 100 B/s × 10s
+        self.assertEqual(slot["tx"], 2000)   # 200 B/s × 10s
+        self.assertEqual(slot["last_pid"], 1)
+
+    def test_store_no_accum_over_max_dt(self):
+        """间隔超过 10 分钟不累计（瞬时进程防虚报），但仍更新最后活跃"""
+        ps = self._new_store()
+        ps.record([{"name": "curl", "pid": 1, "rx": 100, "tx": 100}], now=1000.0)
+        ps.record([{"name": "curl", "pid": 2, "rx": 100, "tx": 100}], now=1000.0 + panel.PROCS_ACCUM_MAX_DT + 1)
+        day = list(ps.data["days"].values())[0]
+        self.assertEqual(day["curl"]["rx"], 0)  # 不累计
+        self.assertEqual(day["curl"]["last_pid"], 2)  # 但 last_seen/last_pid 更新
+
+    def test_store_history_aggregates(self):
+        """history 跨天合并：今日 + 总累计 + 最后活跃降序"""
+        ps = self._new_store()
+        today = panel.datetime.date.today().isoformat()
+        ps.data["days"] = {
+            today: {"curl": {"rx": 100, "tx": 200, "last_seen": 2000, "last_pid": 1},
+                    "nginx": {"rx": 300, "tx": 400, "last_seen": 3000, "last_pid": 2}},
+        }
+        hist = ps.history()
+        self.assertEqual(len(hist), 2)
+        nginx = [h for h in hist if h["name"] == "nginx"][0]
+        self.assertEqual(nginx["today_rx"], 300)
+        self.assertEqual(nginx["total_tx"], 400)
+        self.assertEqual(hist[0]["name"], "nginx")  # last_seen 3000 > 2000 → 降序在前
+
+    def test_store_detail_and_clear(self):
+        """detail 近 7 天补 0 + 总累计；clear 清空"""
+        ps = self._new_store()
+        today = panel.datetime.date.today().isoformat()
+        ps.data["days"] = {today: {"curl": {"rx": 50, "tx": 60}}}
+        d = ps.detail("curl")
+        self.assertEqual(len(d["days"]), 7)
+        self.assertEqual(d["days"][-1]["rx"], 50)  # 今天
+        self.assertEqual(d["total_rx"], 50)
+        self.assertEqual(d["total_tx"], 60)
+        self.assertEqual(ps.detail("not-exist")["total_rx"], 0)
+        ps.clear()
+        self.assertEqual(ps.data["days"], {})
+        self.assertIsNone(ps.data["last_ts"])
+
+    def test_store_persist_reload(self):
+        """持久化：落盘后重载数据仍在（跨重启保留）"""
+        path = os.path.join(self.tmp, "t-persist.json")
+        ps = panel.ProcStore(path)
+        ps.record([{"name": "curl", "pid": 1, "rx": 0, "tx": 0}], now=1000.0)
+        ps.record([{"name": "curl", "pid": 1, "rx": 100, "tx": 100}], now=1010.0)
+        ps2 = panel.ProcStore(path)  # 模拟重启重载
+        day = list(ps2.data["days"].values())[0]
+        self.assertEqual(day["curl"]["rx"], 1000)
+        self.assertEqual(ps2.data["last_ts"], 1010.0)
+
+    # ---------- API：history / detail / clear ----------
+
+    def test_procs_api_history(self):
+        """GET /api/procs 返回 history（历史名单）"""
+        self.pstore.record([{"name": "curl", "pid": 1, "rx": 100, "tx": 200}], now=1000.0)
+        saved = self._patch(
+            procs_snapshot=lambda: {"ok": True, "procs": []},
+            nethogs_available=lambda: True,
+        )
+        try:
+            code, d = self._req("GET", "/api/procs", token=self._token())
+            self.assertEqual(code, 200)
+            names = [h["name"] for h in d["history"]]
+            self.assertIn("curl", names)
+        finally:
+            panel.procs_snapshot = saved["procs_snapshot"]
+            panel.nethogs_available = saved["nethogs_available"]
+
+    def test_procs_api_detail(self):
+        """GET /api/procs?detail=<name> 返回该进程近 7 天"""
+        self.pstore.record([{"name": "nginx", "pid": 2, "rx": 100, "tx": 100}], now=1000.0)
+        saved = self._patch(
+            procs_snapshot=lambda: {"ok": True, "procs": []},
+            nethogs_available=lambda: True,
+        )
+        try:
+            code, d = self._req("GET", "/api/procs?detail=nginx", token=self._token())
+            self.assertEqual(code, 200)
+            self.assertEqual(d["detail"]["name"], "nginx")
+            self.assertEqual(len(d["detail"]["days"]), 7)
+        finally:
+            panel.procs_snapshot = saved["procs_snapshot"]
+            panel.nethogs_available = saved["nethogs_available"]
+
+    def test_procs_clear_api(self):
+        """POST /api/procs/clear 清空历史"""
+        self.pstore.record([{"name": "curl", "pid": 1, "rx": 100, "tx": 100}], now=1000.0)
+        self.assertGreater(len(self.pstore.history()), 0)
+        code, d = self._req("POST", "/api/procs/clear", token=self._token())
+        self.assertEqual(code, 200)
+        self.assertEqual(self.pstore.history(), [])
 
 
 if __name__ == "__main__":

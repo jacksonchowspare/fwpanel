@@ -339,6 +339,44 @@ tr:hover td { background: var(--panel-solid); }
         <span style="color:var(--muted);font-size:12px" id="prc_pageinfo">1/1</span>
         <button class="btn mini ghost" onclick="prcPageGo(1)" id="prc_next">下一页</button>
       </div>
+      <div style="border-top:1px dashed var(--border);margin:12px 0 12px"></div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px">
+        <svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 4 4 5-6"/></svg> 进程历史（按天累计）
+        <span style="margin-left:auto;font-weight:400"><button class="btn mini ghost" onclick="clearProcHistory()">清空历史</button></span>
+      </div>
+      <div class="form-row" style="align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <input id="prc_h_search" placeholder="🔍 搜索历史进程" style="width:200px" oninput="prcHSearchChanged()">
+        <span style="color:var(--muted);font-size:12px">检测过的进程按名称保留（重启不丢），累计为采样间隔估算</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>进程</th><th>最后活跃</th><th>今日上行</th><th>今日下行</th><th>总累计</th><th>操作</th></tr></thead>
+          <tbody id="prc_h_rows"></tbody>
+        </table>
+      </div>
+      <div id="prc_h_empty" class="empty" style="display:none">暂无历史记录（采样到进程后自动保留）</div>
+      <div class="pager" id="prc_h_pager" style="display:none;margin-top:12px;align-items:center;justify-content:center;gap:10px">
+        <button class="btn mini ghost" onclick="prcHPageGo(-1)" id="prc_h_prev">上一页</button>
+        <span style="color:var(--muted);font-size:12px" id="prc_h_pageinfo">1/1</span>
+        <button class="btn mini ghost" onclick="prcHPageGo(1)" id="prc_h_next">下一页</button>
+      </div>
+    </div>
+
+    <!-- 进程历史明细弹窗 -->
+    <div id="prd_modal" class="modal-mask hidden">
+      <div class="modal" style="width:480px">
+        <h3 id="prd_title" style="word-break:break-all"></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>日期</th><th>上行</th><th>下行</th><th>合计</th></tr></thead>
+            <tbody id="prd_rows"></tbody>
+          </table>
+        </div>
+        <div id="prd_total" style="color:var(--muted);font-size:12px;margin-top:10px"></div>
+        <div style="text-align:right;margin-top:14px">
+          <button class="btn mini ghost" onclick="closePrdModal()">关闭</button>
+        </div>
+      </div>
     </div>
 
     <!-- 流量统计：自绘日期选择面板（深色主题） -->
@@ -1098,6 +1136,7 @@ async function loadProcs(manual) {
   if (manual && btn) btn.textContent = "采样中...";
   try {
     const d = await api("GET", "/api/procs");
+    if (d.history) { prcHist = d.history; prcHRender(); }  // 历史名单始终渲染（与 nethogs 安装无关）
     if (!d.installed) {
       $("prc_status").textContent = "⚠ nethogs 未安装（进程流量统计需要，约 100KB）";
       $("btn_prc_install").style.display = "inline-block";
@@ -1188,6 +1227,100 @@ async function installNethogs() {
         btn.textContent = old;
       }
     }, "一键安装 nethogs");
+}
+
+/* ---------- 进程历史（按天累计） ---------- */
+let prcHist = [];    // 历史进程汇总
+let prcHPage = 1;
+let prcHKeyword = "";
+const PRC_H_PAGE_SIZE = 5;
+function fmtSeen(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  const diff = (Date.now() - ts * 1000) / 1000;
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return "今天 " + d.toTimeString().slice(0, 5);
+  const yest = new Date(now - 86400000);
+  if (d.toDateString() === yest.toDateString()) return "昨天 " + d.toTimeString().slice(0, 5);
+  return d.getMonth() + 1 + "月" + d.getDate() + "日";
+}
+function prcHSearchChanged() {
+  prcHKeyword = ($("prc_h_search").value || "").toLowerCase();
+  prcHPage = 1;
+  prcHRender();
+}
+function prcHPageGo(d) {
+  prcHPage += d;
+  prcHRender();
+}
+function prcHRender() {
+  const tbody = $("prc_h_rows");
+  tbody.innerHTML = "";
+  let list = prcHist;
+  if (prcHKeyword) {
+    list = list.filter(p => (p.name || "").toLowerCase().includes(prcHKeyword));
+  }
+  const total = list.length;
+  $("prc_h_empty").style.display = total ? "none" : "block";
+  $("prc_h_empty").textContent = prcHKeyword ? "无匹配" : "暂无历史记录（采样到进程后自动保留）";
+  const pages = Math.max(1, Math.ceil(total / PRC_H_PAGE_SIZE));
+  if (prcHPage > pages) prcHPage = pages;
+  if (prcHPage < 1) prcHPage = 1;
+  list.slice((prcHPage - 1) * PRC_H_PAGE_SIZE, prcHPage * PRC_H_PAGE_SIZE).forEach(p => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td>" + prcEsc(p.name) + "</td>"
+      + "<td style=\"color:var(--muted)\">" + fmtSeen(p.last_seen) + "</td>"
+      + "<td style=\"color:var(--accent2)\">↑ " + fmtBytes(p.today_tx) + "</td>"
+      + "<td>↓ " + fmtBytes(p.today_rx) + "</td>"
+      + "<td>↑ " + fmtBytes(p.total_tx) + " / ↓ " + fmtBytes(p.total_rx) + "</td>"
+      + "<td><button class=\"btn mini ghost\" onclick=\"showProcDetail('" + p.name.replace(/'/g, "\\'") + "')\">明细</button></td>";
+    tbody.appendChild(tr);
+  });
+  const pager = $("prc_h_pager");
+  if (total > PRC_H_PAGE_SIZE) {
+    pager.style.display = "flex";
+    $("prc_h_pageinfo").textContent = prcHPage + "/" + pages + "（共 " + total + " 个进程）";
+    $("prc_h_prev").disabled = prcHPage <= 1;
+    $("prc_h_next").disabled = prcHPage >= pages;
+  } else {
+    pager.style.display = "none";
+  }
+}
+async function showProcDetail(name) {
+  try {
+    const d = await api("GET", "/api/procs?detail=" + encodeURIComponent(name));
+    if (!d.detail) { toast("未找到该进程记录", "err"); return; }
+    $("prd_title").textContent = name;
+    const tbody = $("prd_rows");
+    tbody.innerHTML = "";
+    const today = trToday();
+    (d.detail.days || []).forEach(w => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + (w.date === today ? "今天" : w.date.slice(5)) + "</td>"
+        + "<td style=\"color:var(--accent2)\">↑ " + fmtBytes(w.tx) + "</td>"
+        + "<td>↓ " + fmtBytes(w.rx) + "</td>"
+        + "<td>" + fmtBytes(w.rx + w.tx) + "</td>";
+      tbody.appendChild(tr);
+    });
+    $("prd_total").textContent = "总累计：↑ " + fmtBytes(d.detail.total_tx)
+      + " ↓ " + fmtBytes(d.detail.total_rx)
+      + "（合计 " + fmtBytes(d.detail.total_rx + d.detail.total_tx) + "）";
+    $("prd_modal").classList.remove("hidden");
+  } catch (e) { toast(e.message, "err"); }
+}
+function closePrdModal() { $("prd_modal").classList.add("hidden"); }
+function clearProcHistory() {
+  confirmPanel("将清空全部进程历史（按天累计的流量和进程名单），不可恢复。确认？",
+    async () => {
+      try {
+        const d = await api("POST", "/api/procs/clear");
+        toast(d.msg || "已清空");
+        prcHist = [];
+        prcHRender();
+      } catch (e) { toast(e.message, "err"); }
+    }, "清空进程历史");
 }
 
 /* ---------- 自绘日期选择面板（深色主题，替代原生 date picker） ---------- */
