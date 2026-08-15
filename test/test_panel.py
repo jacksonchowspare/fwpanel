@@ -2713,6 +2713,16 @@ class TestProcs(unittest.TestCase):
 TOTAL: 1836 2404
 """
 
+    # 2026-08 用户服务器实测（Debian 系 nethogs 0.8.5 tracemode 格式）
+    NETHOGS_SAMPLE_DEBIAN = """Ethernet link detected
+Adding local address: 172.19.0.1
+Refreshing:
+sshd-session: root@pts/0/139480/0       0.118359        0.113281
+unknown TCP/0/0 0       0.0257812
+Unknown connection: 45.192.200.237:80-172.69.40.187:12093
+TOTAL: 0.118359 0.139062
+"""
+
     @classmethod
     def setUpClass(cls):
         cls.cfg = make_cfg()
@@ -2798,6 +2808,26 @@ TOTAL: 1836 2404
         self.assertEqual(procs[0]["pid"], 42)
         self.assertEqual(procs[0]["rx"], 77)
         self.assertEqual(procs[0]["tx"], 88)
+
+    def test_parse_debian_format(self):
+        """Debian 系 nethogs 0.8.5 实测格式：progname/pid/uid  sent-KB/s  recv-KB/s"""
+        procs = panel.parse_nethogs_output(self.NETHOGS_SAMPLE_DEBIAN)
+        self.assertEqual(len(procs), 2)
+        sshd = [p for p in procs if p["pid"] == 139480][0]
+        # 程序名含 '/'（sshd-session: root@pts/0）应原样保留，不做 basename
+        self.assertEqual(sshd["name"], "sshd-session: root@pts/0")
+        # KB/s → B/s：0.118359 KB/s ≈ 121.2 B/s（sent=上行=tx）
+        self.assertAlmostEqual(sshd["tx"], 0.118359 * 1024, places=1)
+        self.assertAlmostEqual(sshd["rx"], 0.113281 * 1024, places=1)
+        unk = [p for p in procs if p["pid"] == 0][0]
+        self.assertEqual(unk["name"], "unknown TCP")
+        # nethogs 0.8.5 源码 Line::log(): m_name/m_pid/m_uid sent recv —— 先 sent 后 recv
+        self.assertEqual(unk["tx"], 0)  # sent = 0 → 上行 0
+        self.assertAlmostEqual(unk["rx"], 0.0257812 * 1024, places=1)  # recv = 下行
+        # 排序：sshd 合计 > unknown
+        self.assertEqual(procs[0]["pid"], 139480)
+        # 噪音行（Ethernet link / Adding local address / Unknown connection）不产生进程
+        self.assertNotIn("Ethernet link detected", [p["name"] for p in procs])
 
     def test_cmdline_missing_pid(self):
         """不存在的 PID 返回空串，不抛异常"""

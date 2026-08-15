@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.58"
+CURRENT_VERSION = "1.24.59"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1055,33 +1055,49 @@ def install_nethogs():
 def parse_nethogs_output(text):
     """解析 nethogs tracemode 输出，按 PID 聚合。
 
-    输入行格式（-t 模式，可能带程序路径）:
+    兼容两种实测格式：
+    A. nethogs 0.8.7+（括号端口，bytes/sec）:
         <prog>[/<path>]/<pid>/<local>-<remote>(<lport>-<rport>)/<rx> bytes/sec/<tx> bytes/sec
+    B. nethogs 0.8.5 / Debian 系（空格分隔浮点 KB/s，2026-08 用户实测）:
+        <progname>/<pid>/<uid>  <sent> KB/s  <recv> KB/s
     返回 [{"name", "pid", "rx", "tx", "conns"}]，按 rx+tx 合计降序。
-    解析策略：从右往左锚定固定后缀，地址段不拆分（hostname 可能含 '-'），
-    无法匹配的行（libpcap 警告等）直接跳过。
+    无法匹配的行（libpcap 警告 / Unknown connection / Ethernet link 等）直接跳过。
     """
     procs = {}
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("Refreshing:") or line.startswith("TOTAL:"):
             continue
+        # 格式 A：从右往左锚定固定后缀，地址段不拆分（hostname 可能含 '-'）
         m = re.match(r"^(.*)\((\d+)-(\d+)\)/(\d+) bytes/sec/(\d+) bytes/sec$", line)
-        if not m:
-            continue
-        head, _lport, _rport, rx, tx = m.groups()
-        parts = head.rsplit("/", 2)  # head = <prog>/<pid>/<local>-<remote>
-        if len(parts) != 3:
-            continue
-        prog, pid_str, _conn = parts
-        try:
-            pid = int(pid_str)
-        except ValueError:
-            continue
-        name = os.path.basename(prog.rstrip("/")) or prog
+        if m:
+            head, _lport, _rport, rx, tx = m.groups()
+            parts = head.rsplit("/", 2)  # head = <prog>/<pid>/<local>-<remote>
+            if len(parts) != 3:
+                continue
+            prog, pid_str, _conn = parts
+            try:
+                pid = int(pid_str)
+            except ValueError:
+                continue
+            name = prog if not prog.startswith("/") else os.path.basename(prog.rstrip("/")) or prog
+            rx, tx = int(rx), int(tx)
+        else:
+            # 格式 B：progname/pid/uid  sent-KB/s  recv-KB/s
+            m2 = re.match(r"^(.+?)/(\d+)/(\d+)\s+([\d.]+)\s+([\d.]+)$", line)
+            if not m2:
+                continue
+            prog, pid_str, _uid, sent, recv = m2.groups()
+            try:
+                pid = int(pid_str)
+            except ValueError:
+                continue
+            name = prog if not prog.startswith("/") else os.path.basename(prog.rstrip("/")) or prog
+            tx = float(sent) * 1024.0  # sent = 进程发送 = 上行，KB/s → B/s
+            rx = float(recv) * 1024.0  # recv = 进程接收 = 下行
         p = procs.setdefault(pid, {"name": name, "pid": pid, "rx": 0, "tx": 0, "conns": 0})
-        p["rx"] += int(rx)
-        p["tx"] += int(tx)
+        p["rx"] += rx
+        p["tx"] += tx
         p["conns"] += 1
     return sorted(procs.values(), key=lambda p: p["rx"] + p["tx"], reverse=True)
 
@@ -1106,7 +1122,7 @@ def procs_snapshot():
     if DRY_RUN:
         return {"ok": True, "procs": []}
     try:
-        r = subprocess.run(["nethogs", "-t", "-d", "1", "-c", "2"],
+        r = subprocess.run(["nethogs", "-t", "-d", "1", "-c", "3"],
                            capture_output=True, text=True, timeout=NETHOGS_TIMEOUT)
     except FileNotFoundError:
         return {"ok": False, "error": "nethogs 未安装", "procs": []}

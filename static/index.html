@@ -1118,6 +1118,9 @@ async function loadProcs(manual) {
     prcPage = 1;
     $("prc_status").textContent = "✅ 已采样 " + prcData.length + " 个进程（"
       + new Date(d.ts * 1000).toLocaleTimeString() + "）";
+    if (!prcData.length) {
+      $("prc_status").textContent = "✅ 采样完成，但当前无活跃流量进程 —— nethogs 只统计有流量的进程，请在有下载/上传时再点刷新采样";
+    }
     prcRender();
   } catch (e) {
     if (e.message !== "未登录") $("prc_status").textContent = "采样失败";
