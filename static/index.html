@@ -315,6 +315,30 @@ tr:hover td { background: var(--panel-solid); }
       </div>
       <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin:12px 0 8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg> 总累计流量</div>
       <div id="tr_total" style="color:var(--muted);font-size:12px">加载中...</div>
+      <div style="border-top:1px dashed var(--border);margin:12px 0 12px"></div>
+      <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> 进程流量（实时采样）</div>
+      <div class="form-row" style="align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <span id="prc_status" style="color:var(--muted);font-size:12px">加载中...</span>
+        <button class="btn mini" id="btn_prc_refresh" onclick="loadProcs(true)">刷新采样</button>
+        <button class="btn mini ghost" id="btn_prc_install" style="display:none" onclick="installNethogs()">一键安装</button>
+      </div>
+      <div id="prc_err" style="color:var(--danger);font-size:12px;margin-bottom:8px;display:none"></div>
+      <div class="form-row" style="align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <input id="prc_search" placeholder="🔍 搜索进程 / PID" style="width:200px" oninput="prcSearchChanged()">
+        <span style="color:var(--muted);font-size:12px">鼠标悬停行可查看完整命令行 · 采样约 1-2 秒</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>进程</th><th>PID</th><th>连接</th><th>上行</th><th>下行</th><th>合计</th></tr></thead>
+          <tbody id="prc_rows"></tbody>
+        </table>
+      </div>
+      <div id="prc_empty" class="empty" style="display:none">暂无数据</div>
+      <div class="pager" id="prc_pager" style="display:none;margin-top:12px;align-items:center;justify-content:center;gap:10px">
+        <button class="btn mini ghost" onclick="prcPageGo(-1)" id="prc_prev">上一页</button>
+        <span style="color:var(--muted);font-size:12px" id="prc_pageinfo">1/1</span>
+        <button class="btn mini ghost" onclick="prcPageGo(1)" id="prc_next">下一页</button>
+      </div>
     </div>
 
     <!-- 流量统计：自绘日期选择面板（深色主题） -->
@@ -842,7 +866,7 @@ async function refreshAll() {
     $("st_ver").textContent = "v" + status.version;
     $("panel_port_input").value = status.panel_port || "";
     $("st_ver").textContent = "v" + status.version;
-    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadTraffic(); loadIpv6(); loadDocker(); autoCheckUpgrade();
+    renderSvc(); renderRules(); loadSsh(); loadBf(); loadProxy(); loadCerts(); loadBbr(); loadTraffic(); loadIpv6(); loadDocker(); loadProcs(false); autoCheckUpgrade();
   } catch (e) { if (e.message !== "未登录") toast(e.message, "err"); }
 }
 
@@ -1058,6 +1082,109 @@ async function trQuery() {
       $("tr_custom").textContent = "该日期范围暂无记录";
     }
   } catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------- 进程流量统计（nethogs 采集） ---------- */
+let prcData = [];   // 当前采样结果
+let prcPage = 1;
+let prcKeyword = "";
+const PRC_PAGE_SIZE = 5;
+function prcEsc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+async function loadProcs(manual) {
+  const btn = $("btn_prc_refresh");
+  if (manual && btn) btn.textContent = "采样中...";
+  try {
+    const d = await api("GET", "/api/procs");
+    if (!d.installed) {
+      $("prc_status").textContent = "⚠ nethogs 未安装（进程流量统计需要，约 100KB）";
+      $("btn_prc_install").style.display = "inline-block";
+      $("prc_rows").innerHTML = "";
+      $("prc_empty").style.display = "none";
+      $("prc_pager").style.display = "none";
+      return;
+    }
+    $("btn_prc_install").style.display = "none";
+    if (!d.ok) {
+      $("prc_status").textContent = "❌ " + (d.error || "采样失败");
+      $("prc_rows").innerHTML = "";
+      $("prc_empty").style.display = "none";
+      $("prc_pager").style.display = "none";
+      return;
+    }
+    prcData = d.procs || [];
+    prcPage = 1;
+    $("prc_status").textContent = "✅ 已采样 " + prcData.length + " 个进程（"
+      + new Date(d.ts * 1000).toLocaleTimeString() + "）";
+    prcRender();
+  } catch (e) {
+    if (e.message !== "未登录") $("prc_status").textContent = "采样失败";
+  } finally {
+    if (btn) btn.textContent = "刷新采样";
+  }
+}
+function prcSearchChanged() {
+  prcKeyword = ($("prc_search").value || "").toLowerCase();
+  prcPage = 1;
+  prcRender();
+}
+function prcPageGo(d) {
+  prcPage += d;
+  prcRender();
+}
+function prcRender() {
+  const tbody = $("prc_rows");
+  tbody.innerHTML = "";
+  let list = prcData;
+  if (prcKeyword) {
+    list = list.filter(p => (p.name || "").toLowerCase().includes(prcKeyword)
+      || String(p.pid).includes(prcKeyword));
+  }
+  const total = list.length;
+  $("prc_empty").style.display = total ? "none" : "block";
+  $("prc_empty").textContent = prcKeyword ? "无匹配" : "暂无（当前没有活跃流量进程，点击刷新采样）";
+  const pages = Math.max(1, Math.ceil(total / PRC_PAGE_SIZE));
+  if (prcPage > pages) prcPage = pages;
+  if (prcPage < 1) prcPage = 1;
+  list.slice((prcPage - 1) * PRC_PAGE_SIZE, prcPage * PRC_PAGE_SIZE).forEach(p => {
+    const tr = document.createElement("tr");
+    if (p.cmdline) tr.title = p.cmdline;
+    tr.innerHTML = "<td>" + prcEsc(p.name) + "</td><td>" + p.pid + "</td><td>"
+      + (p.conns || 0) + "</td>"
+      + "<td style=\"color:var(--accent2)\">↑ " + fmtSpeed(p.tx) + "</td>"
+      + "<td>↓ " + fmtSpeed(p.rx) + "</td>"
+      + "<td><b>" + fmtSpeed(p.rx + p.tx) + "</b></td>";
+    tbody.appendChild(tr);
+  });
+  const pager = $("prc_pager");
+  if (total > PRC_PAGE_SIZE) {
+    pager.style.display = "flex";
+    $("prc_pageinfo").textContent = prcPage + "/" + pages + "（共 " + total + " 个进程）";
+    $("prc_prev").disabled = prcPage <= 1;
+    $("prc_next").disabled = prcPage >= pages;
+  } else {
+    pager.style.display = "none";
+  }
+}
+async function installNethogs() {
+  confirmPanel("将安装 nethogs（进程流量统计的数据采集器，apt/pacman/dnf 自动识别）。\n\n安装约需 1-2 分钟，确认？",
+    async () => {
+      const btn = $("btn_prc_install");
+      const old = btn.textContent;
+      btn.textContent = "安装中...";
+      try {
+        const d = await api("POST", "/api/procs/install");
+        toast(d.msg || d.error || "安装完成", d.ok ? "" : "err");
+        loadProcs(true);
+      } catch (e) {
+        toast(e.message, "err");
+        loadProcs(false);
+      } finally {
+        btn.textContent = old;
+      }
+    }, "一键安装 nethogs");
 }
 
 /* ---------- 自绘日期选择面板（深色主题，替代原生 date picker） ---------- */

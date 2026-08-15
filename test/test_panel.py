@@ -2703,5 +2703,177 @@ class TestTraffic(unittest.TestCase):
             panel.read_net_dev = saved
 
 
+class TestProcs(unittest.TestCase):
+    """进程流量统计：parse_nethogs_output 解析 + /api/procs API + 一键安装 nethogs"""
+
+    NETHOGS_SAMPLE = """Refreshing:
+/usr/sbin/nginx/1234/1.2.3.4-5.6.7.8(443-51234)/1024 bytes/sec/2048 bytes/sec
+/usr/sbin/nginx/1234/1.2.3.4-9.9.9.9(80-40000)/512 bytes/sec/256 bytes/sec
+/usr/bin/python3/5678/127.0.0.1-10.0.0.1(17890-60000)/300 bytes/sec/100 bytes/sec
+TOTAL: 1836 2404
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg = make_cfg()
+        cls.store = panel.RuleStore()
+        cls.store.rules = []
+        cls.nft = panel.NFTManager(cls.store, cls.cfg)
+        cls.auth = panel.Auth(cls.cfg)
+        cls.server = panel.PanelServer(("127.0.0.1", 17996), panel.PanelHandler,
+                                       cls.cfg, cls.store, cls.nft, cls.auth)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base = "http://127.0.0.1:17996"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def _req(self, method, path, data=None, token=None):
+        req = urllib.request.Request(self.base + path, method=method)
+        if token:
+            req.add_header("Authorization", "Bearer " + token)
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode()
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, body) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read())
+            except Exception:
+                return e.code, {}
+
+    def _token(self):
+        for pw in (TEST_PASS, "NewPass123"):
+            code, d = self._req("POST", "/api/login",
+                                {"username": TEST_USER, "password": pw})
+            if code == 200:
+                return d["token"]
+        self.fail("无法获取测试 token")
+
+    def _patch(self, **mocks):
+        saved = {}
+        for name, fn in mocks.items():
+            saved[name] = getattr(panel, name)
+            setattr(panel, name, fn)
+        return saved
+
+    # ---------- 解析器 ----------
+
+    def test_parse_aggregates_by_pid(self):
+        """多连接同进程按 PID 聚合，按合计降序"""
+        procs = panel.parse_nethogs_output(self.NETHOGS_SAMPLE)
+        self.assertEqual(len(procs), 2)
+        nginx = [p for p in procs if p["pid"] == 1234][0]
+        self.assertEqual(nginx["name"], "nginx")          # 路径取 basename
+        self.assertEqual(nginx["rx"], 1536)               # 1024 + 512
+        self.assertEqual(nginx["tx"], 2304)               # 2048 + 256
+        self.assertEqual(nginx["conns"], 2)
+        self.assertEqual(procs[0]["pid"], 1234)           # 合计 3840 > python3 400
+
+    def test_parse_no_path_prog(self):
+        """-C 模式下程序名无路径（老版本 nethogs 兼容）"""
+        text = "Refreshing:\nnginx/1234/1.1.1.1-2.2.2.2(80-1111)/10 bytes/sec/20 bytes/sec\n"
+        procs = panel.parse_nethogs_output(text)
+        self.assertEqual(procs[0]["name"], "nginx")
+        self.assertEqual(procs[0]["rx"], 10)
+        self.assertEqual(procs[0]["tx"], 20)
+
+    def test_parse_noise_and_blank(self):
+        """libpcap 警告/空行/仅 TOTAL 都应忽略"""
+        text = "Refreshing:\n\nsome libpcap warning line\nTOTAL: 0 0\n"
+        self.assertEqual(panel.parse_nethogs_output(text), [])
+        self.assertEqual(panel.parse_nethogs_output(""), [])
+
+    def test_parse_hostname_with_dash(self):
+        """地址段为 hostname 含 '-' 也能解析（从右往左锚定后缀）"""
+        text = "Refreshing:\nsshd/42/my-host-1-remote-host-2(22-33333)/77 bytes/sec/88 bytes/sec\n"
+        procs = panel.parse_nethogs_output(text)
+        self.assertEqual(procs[0]["name"], "sshd")
+        self.assertEqual(procs[0]["pid"], 42)
+        self.assertEqual(procs[0]["rx"], 77)
+        self.assertEqual(procs[0]["tx"], 88)
+
+    def test_cmdline_missing_pid(self):
+        """不存在的 PID 返回空串，不抛异常"""
+        self.assertEqual(panel.procs_cmdline(99999999), "")
+        # 自己的 PID 应能读到命令行（非内核线程）
+        self.assertTrue(len(panel.procs_cmdline(os.getpid())) > 0)
+
+    # ---------- API ----------
+
+    def test_procs_api_installed(self):
+        """GET /api/procs：已安装 + 采样成功"""
+        saved = self._patch(
+            procs_snapshot=lambda: {"ok": True, "procs": [
+                {"name": "nginx", "pid": 1234, "cmdline": "nginx -g daemon off;",
+                 "rx": 100, "tx": 200, "conns": 2}]},
+            nethogs_available=lambda: True,
+        )
+        try:
+            code, d = self._req("GET", "/api/procs", token=self._token())
+            self.assertEqual(code, 200)
+            self.assertTrue(d["installed"])
+            self.assertTrue(d["ok"])
+            self.assertEqual(d["procs"][0]["name"], "nginx")
+            self.assertIsInstance(d["ts"], int)
+        finally:
+            panel.procs_snapshot = saved["procs_snapshot"]
+            panel.nethogs_available = saved["nethogs_available"]
+
+    def test_procs_api_not_installed(self):
+        """GET /api/procs：未安装 → installed=False + 提示"""
+        saved = self._patch(
+            procs_snapshot=lambda: {"ok": False, "error": "nethogs 未安装", "procs": []},
+            nethogs_available=lambda: False,
+        )
+        try:
+            code, d = self._req("GET", "/api/procs", token=self._token())
+            self.assertEqual(code, 200)
+            self.assertFalse(d["installed"])
+            self.assertFalse(d["ok"])
+            self.assertEqual(d["procs"], [])
+        finally:
+            panel.procs_snapshot = saved["procs_snapshot"]
+            panel.nethogs_available = saved["nethogs_available"]
+
+    def test_procs_install_ok(self):
+        """POST /api/procs/install：安装成功 → 200"""
+        saved = self._patch(
+            install_nethogs=lambda: (True, "已安装: nethogs"),
+            nethogs_available=lambda: True,
+        )
+        try:
+            code, d = self._req("POST", "/api/procs/install", token=self._token())
+            self.assertEqual(code, 200)
+            self.assertTrue(d["ok"])
+            self.assertTrue(d["installed"])
+        finally:
+            panel.install_nethogs = saved["install_nethogs"]
+            panel.nethogs_available = saved["nethogs_available"]
+
+    def test_procs_install_fail(self):
+        """POST /api/procs/install：安装失败 → 500 + 错误信息"""
+        saved = self._patch(
+            install_nethogs=lambda: (False, "安装失败: 无法识别包管理器"),
+        )
+        try:
+            code, d = self._req("POST", "/api/procs/install", token=self._token())
+            self.assertEqual(code, 500)
+            self.assertIn("安装失败", d.get("error", ""))
+        finally:
+            panel.install_nethogs = saved["install_nethogs"]
+
+    def test_procs_requires_auth(self):
+        """未登录访问 /api/procs → 401"""
+        code, d = self._req("GET", "/api/procs")
+        self.assertEqual(code, 401)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

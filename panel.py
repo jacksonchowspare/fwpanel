@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.57"
+CURRENT_VERSION = "1.24.58"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1033,6 +1033,94 @@ def traffic_loop(store, interval=TRAFFIC_INTERVAL):
         except Exception as e:
             log(f"网卡流量采样异常: {e}")
         time.sleep(interval)
+
+
+# ------------------------------- 进程流量统计（nethogs） -------------------------------
+
+NETHOGS_TIMEOUT = 25  # nethogs 采样超时（秒）
+
+
+def nethogs_available():
+    """检测 nethogs 是否安装（进程流量统计的数据采集器，可选依赖）"""
+    return shutil.which("nethogs") is not None
+
+
+def install_nethogs():
+    """一键安装 nethogs（apt/pacman/dnf 包名均为 nethogs）"""
+    if DRY_RUN:
+        return True, "DRY_RUN: 安装 nethogs"
+    return install_pkgs(["nethogs"])
+
+
+def parse_nethogs_output(text):
+    """解析 nethogs tracemode 输出，按 PID 聚合。
+
+    输入行格式（-t 模式，可能带程序路径）:
+        <prog>[/<path>]/<pid>/<local>-<remote>(<lport>-<rport>)/<rx> bytes/sec/<tx> bytes/sec
+    返回 [{"name", "pid", "rx", "tx", "conns"}]，按 rx+tx 合计降序。
+    解析策略：从右往左锚定固定后缀，地址段不拆分（hostname 可能含 '-'），
+    无法匹配的行（libpcap 警告等）直接跳过。
+    """
+    procs = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Refreshing:") or line.startswith("TOTAL:"):
+            continue
+        m = re.match(r"^(.*)\((\d+)-(\d+)\)/(\d+) bytes/sec/(\d+) bytes/sec$", line)
+        if not m:
+            continue
+        head, _lport, _rport, rx, tx = m.groups()
+        parts = head.rsplit("/", 2)  # head = <prog>/<pid>/<local>-<remote>
+        if len(parts) != 3:
+            continue
+        prog, pid_str, _conn = parts
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            continue
+        name = os.path.basename(prog.rstrip("/")) or prog
+        p = procs.setdefault(pid, {"name": name, "pid": pid, "rx": 0, "tx": 0, "conns": 0})
+        p["rx"] += int(rx)
+        p["tx"] += int(tx)
+        p["conns"] += 1
+    return sorted(procs.values(), key=lambda p: p["rx"] + p["tx"], reverse=True)
+
+
+def procs_cmdline(pid):
+    """读 /proc/<pid>/cmdline 返回完整命令行（NUL 分隔转空格）；进程已退出返回空串"""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            raw = f.read()
+        return raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+
+
+def procs_snapshot():
+    """采样一次进程流量：nethogs -t -d 1 -c 2，取最后一次 Refreshing 块（最新速率）。
+
+    返回 {"ok": bool, "error": str, "procs": [{"name","pid","cmdline","rx","tx","conns"}]}
+    """
+    if not nethogs_available():
+        return {"ok": False, "error": "nethogs 未安装", "procs": []}
+    if DRY_RUN:
+        return {"ok": True, "procs": []}
+    try:
+        r = subprocess.run(["nethogs", "-t", "-d", "1", "-c", "2"],
+                           capture_output=True, text=True, timeout=NETHOGS_TIMEOUT)
+    except FileNotFoundError:
+        return {"ok": False, "error": "nethogs 未安装", "procs": []}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "采样超时（nethogs 无响应）", "procs": []}
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").strip()[:200]
+        return {"ok": False, "error": "nethogs 失败: %s" % err, "procs": []}
+    blocks = r.stdout.split("Refreshing:")
+    text = blocks[-1] if blocks else ""  # 最后一次 Refreshing 块为最新速率
+    procs = parse_nethogs_output(text)
+    for p in procs:
+        p["cmdline"] = procs_cmdline(p["pid"])
+    return {"ok": True, "procs": procs}
 
 
 # ------------------------------- 反向代理（Nginx） -------------------------------
@@ -2393,6 +2481,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_bbr()
         elif path == "/api/traffic":
             self._api_traffic()
+        elif path == "/api/procs":
+            self._api_procs()
         elif path == "/api/ipv6":
             self._api_ipv6()
         elif path == "/api/cert":
@@ -2466,6 +2556,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_panel_port()
         elif path == "/api/bbr":
             self._api_bbr_enable()
+        elif path == "/api/procs/install":
+            self._api_procs_install()
         elif path == "/api/ipv6":
             self._api_ipv6()
         elif path == "/api/restart":
@@ -3116,6 +3208,28 @@ class PanelHandler(BaseHTTPRequestHandler):
                 "days": max(0, (d1 - d0).days + 1),
             }
         self._send(200, resp)
+
+    def _api_procs(self):
+        """进程流量统计：GET /api/procs
+        返回 {installed, ok, error, procs, ts}；采样约 1-2 秒"""
+        token = self._require_auth()
+        if token is None:
+            return
+        resp = procs_snapshot()
+        resp["installed"] = nethogs_available()
+        resp["ts"] = int(time.time())
+        self._send(200, resp)
+
+    def _api_procs_install(self):
+        """一键安装 nethogs：POST /api/procs/install"""
+        token = self._require_auth()
+        if token is None:
+            return
+        ok, msg = install_nethogs()
+        if ok:
+            self._send(200, {"ok": True, "msg": msg, "installed": nethogs_available()})
+        else:
+            self._send(500, {"error": msg})
 
     def _api_bbr(self):
         """查询 BBR 状态与内核版本"""
