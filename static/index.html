@@ -360,6 +360,7 @@ tr:hover td { background: var(--panel-solid); }
         <span style="color:var(--muted);font-size:12px" id="prc_h_pageinfo">1/1</span>
         <button class="btn mini ghost" onclick="prcHPageGo(1)" id="prc_h_next">下一页</button>
       </div>
+      <div id="prc_h_count" style="color:var(--muted);font-size:12px;margin-top:8px"></div>
     </div>
 
     <!-- 进程历史明细弹窗 -->
@@ -1293,6 +1294,8 @@ function prcHRender() {
   } else {
     pager.style.display = "none";
   }
+  // 总数提示（无论是否分页都显示，避免"只显示 5 行"误解）
+  $("prc_h_count").textContent = "共 " + total + " 个进程" + (total > PRC_H_PAGE_SIZE ? "，第 " + prcHPage + "/" + pages + " 页" : "");
 }
 async function showProcDetail(name) {
   try {
