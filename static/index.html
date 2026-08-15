@@ -1126,12 +1126,16 @@ async function trQuery() {
 let prcData = [];   // 当前采样结果
 let prcPage = 1;
 let prcKeyword = "";
+let prcTimer = null;  // 30s 自动采样定时器
+let prcBusy = false;  // 采样中防重入（手动+自动不重叠抓包）
 const PRC_PAGE_SIZE = 5;
 function prcEsc(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 async function loadProcs(manual) {
+  if (prcBusy) return;  // 采样中（约 2-3 秒）跳过本次触发
+  prcBusy = true;
   const btn = $("btn_prc_refresh");
   if (manual && btn) btn.textContent = "采样中...";
   try {
@@ -1164,7 +1168,9 @@ async function loadProcs(manual) {
   } catch (e) {
     if (e.message !== "未登录") $("prc_status").textContent = "采样失败";
   } finally {
+    prcBusy = false;
     if (btn) btn.textContent = "刷新采样";
+    if (!prcTimer) prcTimer = setInterval(() => loadProcs(false), 30000); // 30s 自动采样
   }
 }
 function prcSearchChanged() {
