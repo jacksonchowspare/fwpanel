@@ -1126,7 +1126,7 @@ async function trQuery() {
 let prcData = [];   // 当前采样结果
 let prcPage = 1;
 let prcKeyword = "";
-let prcTimer = null;  // 30s 自动采样定时器
+let prcTimer = null;  // 60s 自动采样定时器
 let prcBusy = false;  // 采样中防重入（手动+自动不重叠抓包）
 const PRC_PAGE_SIZE = 5;
 function prcEsc(s) {
@@ -1170,7 +1170,7 @@ async function loadProcs(manual) {
   } finally {
     prcBusy = false;
     if (btn) btn.textContent = "刷新采样";
-    if (!prcTimer) prcTimer = setInterval(() => loadProcs(false), 30000); // 30s 自动采样
+    if (!prcTimer) prcTimer = setInterval(() => loadProcs(false), 60000); // 60s 自动采样
   }
 }
 function prcSearchChanged() {
