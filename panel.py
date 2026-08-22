@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.63"
+CURRENT_VERSION = "1.24.64"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -3655,15 +3655,18 @@ class PanelHandler(BaseHTTPRequestHandler):
             "hsts": bool(data.get("hsts")),
             "ssl": bool(data.get("ssl")),
         })
-        # 防火墙放行 443（幂等）；80 不放行，如需证书申请请自行放行 80
+        # 防火墙放行反代入口端口（幂等）：ssl=true→443，http→80
+        # ⚠ v1.24.64 修复：http 反代（ssl:false）nginx 监听 80，若不放行 80，
+        # 严格模式（policy drop）下公网入口被自己防火墙挡死（Oracle 新机实测）
         store = self.server.store
         changed = False
-        for p443 in (443,):
-            if not any(r.get("type") == "port_allow" and r.get("port") == p443
-                       for r in store.rules):
-                store.add({"type": "port_allow", "proto": "tcp", "port": p443,
-                           "comment": "反代:HTTPS"})
-                changed = True
+        entry_port = 443 if p.get("ssl") else 80
+        entry_comment = "反代:HTTPS" if p.get("ssl") else "反代:HTTP"
+        if not any(r.get("type") == "port_allow" and r.get("port") == entry_port
+                   for r in store.rules):
+            store.add({"type": "port_allow", "proto": "tcp", "port": entry_port,
+                       "comment": entry_comment})
+            changed = True
         # 禁止公网直连目标端口（80/443 除外——入口端口由 nginx 兜底 444 控制）
         # 拒绝规则含回环豁免，不影响 nginx 本机转发
         if port not in (80, 443) and not any(

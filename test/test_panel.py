@@ -703,18 +703,26 @@ class TestAPI(unittest.TestCase):
                              "target_port": 8080, "websocket": True}, token=token)
         self.assertEqual(code, 200, d)
         pid = d["proxy"]["id"]
-        # 防火墙仅自动放行 443（80 不放行）
+        # 防火墙自动放行入口端口：http 反代 → 80（v1.24.64 修复，原只放行 443）
         code, d = self._req("GET", "/api/rules", token=token)
         ports = {r.get("port") for r in d["rules"] if r.get("type") == "port_allow"}
-        self.assertIn(443, ports)
+        self.assertIn(80, ports, "http 反代应自动放行 80")
+        self.assertNotIn(443, ports, "http 反代不应放行 443")
         # 目标端口 8080 自动禁止公网直连
         deny = [r for r in d["rules"] if r.get("type") == "port_deny" and r.get("port") == 8080]
         self.assertTrue(deny, "目标端口应有禁止规则")
         self.assertEqual(deny[0]["comment"], panel.PROXY_TARGET_DENY_COMMENT)
-        self.assertNotIn(80, ports, "80 不应自动放行")
-        # 查询列表
+        # https 反代 → 自动放行 443
+        code, d = self._req("POST", "/api/proxy",
+                            {"domain": "tls.example.com", "target_host": "127.0.0.1",
+                             "target_port": 8081, "ssl": True}, token=token)
+        self.assertEqual(code, 200, d)
+        code, d = self._req("GET", "/api/rules", token=token)
+        ports = {r.get("port") for r in d["rules"] if r.get("type") == "port_allow"}
+        self.assertIn(443, ports, "https 反代应自动放行 443")
+        # 查询列表（http + https 两个代理）
         code, d = self._req("GET", "/api/proxy", token=token)
-        self.assertEqual(len(d["proxies"]), 1)
+        self.assertEqual(len(d["proxies"]), 2)
         self.assertEqual(d["proxies"][0]["domain"], "app.example.com")
         # 重复域名拒绝
         code, d = self._req("POST", "/api/proxy",
@@ -735,12 +743,18 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(code, 200, d)
         code, d = self._req("DELETE", f"/api/proxy/{pid}", token=token)
         self.assertEqual(code, 200, d)
+        # 删除 https 反代（tls.example.com）
+        code, d = self._req("GET", "/api/proxy", token=token)
+        tls_pid = [p["id"] for p in d["proxies"] if p["domain"] == "tls.example.com"]
+        self.assertEqual(len(tls_pid), 1)
+        code, d = self._req("DELETE", f"/api/proxy/{tls_pid[0]}", token=token)
+        self.assertEqual(code, 200, d)
         code, d = self._req("GET", "/api/proxy", token=token)
         self.assertEqual(d["proxies"], [])
-        # 清理 443 规则（避免影响其他测试）
+        # 清理 80/443 规则（避免影响其他测试）
         code, d = self._req("GET", "/api/rules", token=token)
         for r in d["rules"]:
-            if r.get("comment") == "反代:HTTPS":
+            if r.get("comment") in ("反代:HTTPS", "反代:HTTP"):
                 self._req("DELETE", f"/api/rules/{r['id']}", token=token)
         if os.path.exists(panel.PROXIES_FILE):
             os.remove(panel.PROXIES_FILE)
