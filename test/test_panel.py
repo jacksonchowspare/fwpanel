@@ -1062,6 +1062,97 @@ class TestAPI(unittest.TestCase):
             if os.path.exists(panel.CERT_FILE):
                 os.remove(panel.CERT_FILE)
 
+    def test_cert_api_dns(self):
+        """独立证书 API：DNS 验证申请（acme.sh 三家）+ 续期分流 + 旧格式兼容"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": TEST_PASS})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        if os.path.exists(panel.CERT_FILE):
+            os.remove(panel.CERT_FILE)
+        real_issue_dns, real_renew_dns = panel.issue_cert_dns, panel.renew_cert_dns
+        calls = {}
+
+        def fake_issue_dns(domain, email, provider, creds):
+            calls["issue"] = (domain, email, provider, dict(creds))
+            return True, "证书已签发（DNS 验证）"
+
+        def fake_renew_dns(domain):
+            calls["renew"] = domain
+            return True, "证书已续期（DNS 验证）"
+        panel.issue_cert_dns = fake_issue_dns
+        panel.renew_cert_dns = fake_renew_dns
+        try:
+            # DNS 申请（Cloudflare）
+            code, d = self._req("POST", "/api/cert",
+                                {"domain": "dns.example.com", "method": "dns",
+                                 "provider": "cf", "credentials": {"CF_Token": "tok123"}}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertIn("DNS", d["msg"])
+            self.assertEqual(calls["issue"][0], "dns.example.com")
+            self.assertEqual(calls["issue"][2], "cf")
+            self.assertEqual(calls["issue"][3], {"CF_Token": "tok123"})
+            # 列表显示 method/provider
+            code, d = self._req("GET", "/api/cert", token=token)
+            self.assertEqual(code, 200)
+            cert = [c for c in d["certs"] if c["domain"] == "dns.example.com"][0]
+            self.assertEqual(cert["method"], "dns")
+            self.assertEqual(cert["provider"], "cf")
+            # 续期分流到 renew_cert_dns
+            code, d = self._req("POST", "/api/cert/dns.example.com",
+                                {"action": "renew"}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertEqual(calls["renew"], "dns.example.com")
+            # 旧格式（str 值）兼容
+            panel.save_cert_store({"old.example.com": "a@b.com"})
+            code, d = self._req("GET", "/api/cert", token=token)
+            old = [c for c in d["certs"] if c["domain"] == "old.example.com"][0]
+            self.assertEqual(old["method"], "http")
+            # 非法 method
+            code, d = self._req("POST", "/api/cert",
+                                {"domain": "x.example.com", "method": "ftp"}, token=token)
+            self.assertEqual(code, 400)
+        finally:
+            panel.issue_cert_dns, panel.renew_cert_dns = real_issue_dns, real_renew_dns
+            if os.path.exists(panel.CERT_FILE):
+                os.remove(panel.CERT_FILE)
+
+    def test_upgrade_check_prerelease(self):
+        """升级检测：返回 prerelease 字段；beta 升级指定 tag、stable 不带 tag"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        real_pre, real_latest, real_perform = panel.get_latest_prerelease, panel.get_latest_version, panel.perform_upgrade
+        panel.get_latest_version = lambda: "1.25.1"
+        panel.get_latest_prerelease = lambda: "1.26.0"
+        called = {}
+
+        def fake_perform(tag=None):
+            called["tag"] = tag
+            return True, "升级成功"
+        panel.perform_upgrade = fake_perform
+        try:
+            code, d = self._req("GET", "/api/upgrade/check", token=token)
+            self.assertEqual(code, 200)
+            self.assertEqual(d["latest"], "1.25.1")
+            self.assertEqual(d["prerelease"]["tag"], "1.26.0")
+            self.assertTrue(d["prerelease"]["update_available"])
+            # beta 升级：perform_upgrade 收到测试版 tag
+            code, d = self._req("POST", "/api/upgrade", {"channel": "beta"}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertEqual(called["tag"], "1.26.0")
+            # stable 升级：不带 tag
+            code, d = self._req("POST", "/api/upgrade", {"channel": "stable"}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertIsNone(called["tag"])
+            # 无测试版时 beta 升级 400
+            panel.get_latest_prerelease = lambda: None
+            code, d = self._req("POST", "/api/upgrade", {"channel": "beta"}, token=token)
+            self.assertEqual(code, 400)
+        finally:
+            panel.get_latest_prerelease, panel.get_latest_version, panel.perform_upgrade = real_pre, real_latest, real_perform
+
     def test_ipv6_mode(self):
         """IPv6 模式设置：sysctl.d + gai.conf 写入（隔离路径）"""
         import tempfile
@@ -1370,6 +1461,93 @@ class TestUpgrade(unittest.TestCase):
                         "升级应生成备份文件")
         self.assertTrue(os.path.exists(os.path.join(self.app_tmp, "static", "favicon.ico")),
                         "升级应部署 favicon.ico")
+
+    def test_issue_cert_dns(self):
+        """DNS 证书申请：acme.sh 命令参数 + 凭证环境变量 + 缺凭证拒绝 + 不支持提供商"""
+        real_run = panel.subprocess.run
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append((list(cmd), dict(kw.get("env") or {})))
+            class R:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+            return R()
+        panel.subprocess.run = fake_run
+        old_sh, old_le = panel.ACME_SH, panel.LE_LIVE
+        old_acme_avail, old_install = panel.acme_available, panel.install_acme_sh
+        panel.ACME_SH = "/root/.acme.sh/acme.sh"
+        panel.LE_LIVE = os.path.join(self.app_tmp, "le-live")
+        panel.acme_available = lambda: True
+        panel.install_acme_sh = lambda: True
+        try:
+            ok, msg = panel.issue_cert_dns("dns.example.com", "a@b.com", "cf", {"CF_Token": "tok"})
+            self.assertTrue(ok, msg)
+            issue_cmd = calls[0][0]
+            self.assertEqual(issue_cmd, ["/root/.acme.sh/acme.sh", "--issue", "-d", "dns.example.com",
+                                         "--dns", "dns_cf", "--server", "letsencrypt", "--force"])
+            self.assertEqual(calls[0][1].get("CF_Token"), "tok")
+            self.assertEqual(calls[0][1].get("ACME_EMAIL"), "a@b.com")
+            install_cmd = calls[1][0]
+            self.assertIn("--install-cert", install_cmd)
+            self.assertIn(os.path.join(self.app_tmp, "le-live", "dns.example.com", "fullchain.pem"), install_cmd)
+            # 缺凭证拒绝
+            ok, msg = panel.issue_cert_dns("d.example.com", "", "ali", {})
+            self.assertFalse(ok)
+            self.assertIn("缺少凭证", msg)
+            # 不支持的提供商
+            ok, msg = panel.issue_cert_dns("d.example.com", "", "xxx", {})
+            self.assertFalse(ok)
+            self.assertIn("不支持的 DNS 提供商", msg)
+        finally:
+            panel.subprocess.run = real_run
+            panel.ACME_SH, panel.LE_LIVE = old_sh, old_le
+            panel.acme_available, panel.install_acme_sh = old_acme_avail, old_install
+
+    def test_prerelease_detect(self):
+        """测试版检测：releases 列表过滤 prerelease + 语义最大 + 与正式版共存"""
+        real_json = panel.http_get_json
+
+        def fake_json(url, **kw):
+            if "releases?per_page" in url:
+                return [
+                    {"tag_name": "v1.24.66", "prerelease": False},
+                    {"tag_name": "v1.25.0", "prerelease": True},
+                    {"tag_name": "v1.25.0-beta", "prerelease": True},
+                ]
+            if "releases/latest" in url:
+                return {"tag_name": "v1.24.66"}
+            return None
+        panel.http_get_json = fake_json
+        try:
+            self.assertEqual(panel.get_latest_prerelease(), "1.25.0")
+            self.assertEqual(panel.get_latest_version(), "1.24.66")
+        finally:
+            panel.http_get_json = real_json
+
+    def test_prerelease_none(self):
+        """无测试版时返回 None"""
+        real_json = panel.http_get_json
+
+        def fake_json(url, **kw):
+            if "releases?per_page" in url:
+                return [{"tag_name": "v1.24.65", "prerelease": False}]
+            return None
+        panel.http_get_json = fake_json
+        try:
+            self.assertIsNone(panel.get_latest_prerelease())
+        finally:
+            panel.http_get_json = real_json
+
+    def test_upgrade_specific_tag(self):
+        """perform_upgrade(tag=...) 升级到指定测试版 tag"""
+        panel.get_latest_version = lambda: "9.9.9"  # 不应被调用（指定 tag 时）
+        panel.download_panel_files = lambda tag, tmp: self._make_new_files(tag)
+        ok, msg = panel.perform_upgrade(tag="1.26.0")
+        self.assertTrue(ok, msg)
+        with open(os.path.join(self.app_tmp, "panel.py")) as f:
+            self.assertIn("1.26.0", f.read())
 
     def test_version_compare(self):
         self.assertTrue(panel.version_gt("1.10.0", "1.9.0"))

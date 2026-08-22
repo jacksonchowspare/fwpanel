@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.24.65"
+CURRENT_VERSION = "1.25.0"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -516,6 +516,29 @@ def get_latest_version():
     return None
 
 
+def get_latest_prerelease():
+    """查询最新测试版（GitHub prerelease）版本号。
+
+    ⚠ jsDelivr data API 不含 prerelease 信息，只能走 GitHub API 列表
+    （主源重试 3 次 → gh-proxy.com 代理兜底）。无测试版返回 None。"""
+    def _pick(entries):
+        if not isinstance(entries, list):
+            return None
+        tags = [str(x["tag_name"]).lstrip("v") for x in entries
+                if x.get("prerelease") and x.get("tag_name")]
+        if not tags:
+            return None
+        return max(tags, key=lambda v: tuple(int(p) for p in v.split(".") if p.isdigit()))
+    for attempt in (1, 2, 3):
+        d = http_get_json("https://api.github.com/repos/jacksonchowspare/fwpanel/releases?per_page=10", timeout=20)
+        if isinstance(d, list):
+            return _pick(d)   # 列表已拿到，无 prerelease 就是确实没有
+        if attempt < 3:
+            time.sleep(2)
+    d = http_get_json("https://gh-proxy.com/https://api.github.com/repos/jacksonchowspare/fwpanel/releases?per_page=10", timeout=20)
+    return _pick(d)
+
+
 def download_panel_files(tag, tmpdir):
     """按版本号下载 panel.py / index.html / github-logo.png / favicon.ico 到临时目录；
     带内容头校验（expect 前缀），镜像返回错误页时跳过该源；
@@ -552,9 +575,9 @@ def download_panel_files(tag, tmpdir):
     return py_path, html_path, (logo_path if ok else None), (ico_path if ok2 else None)
 
 
-def perform_upgrade():
-    """一键升级：检查版本 → 下载 → 校验 → 备份 → 替换 → 延迟重启。返回 (ok, msg)"""
-    latest = get_latest_version()
+def perform_upgrade(tag=None):
+    """一键升级：检查版本（tag=None 用最新正式版）→ 下载 → 校验 → 备份 → 替换 → 延迟重启。返回 (ok, msg)"""
+    latest = tag or get_latest_version()
     if not latest:
         return False, "无法获取最新版本（网络问题），请稍后再试"
     if not version_gt(latest, CURRENT_VERSION):
@@ -1249,6 +1272,23 @@ CERT_FILE = os.path.join(BASE_DIR, "certificates.json")
 ACME_WEBROOT = "/var/www/fwpanel-acme"
 LE_LIVE = "/etc/letsencrypt/live"
 PROXY_TARGET_DENY_COMMENT = "反代目标端口-禁止公网直连"
+# acme.sh DNS 验证（v1.25.0：Cloudflare/DNSPod/阿里云 三家通吃，无需 80 端口）
+ACME_SH = os.path.expanduser("~/.acme.sh/acme.sh")
+DNS_PROVIDERS = {
+    "cf":  {"name": "Cloudflare", "dns": "dns_cf",
+            "fields": [("CF_Token", "API Token")]},
+    "dp":  {"name": "DNSPod（腾讯云）", "dns": "dns_dp",
+            "fields": [("DP_Id", "DNSPod ID"), ("DP_Key", "DNSPod Token")]},
+    "ali": {"name": "阿里云", "dns": "dns_ali",
+            "fields": [("Ali_Key", "AccessKey ID"), ("Ali_Secret", "AccessKey Secret")]},
+}
+
+
+def _cert_meta(entry):
+    """兼容新旧 certificates.json 结构：str=旧版 webroot，dict=新版 {email, method, provider}"""
+    if isinstance(entry, dict):
+        return str(entry.get("email", "")), str(entry.get("method", "http")), str(entry.get("provider", ""))
+    return str(entry or ""), "http", ""
 
 
 def load_cert_store():
@@ -1539,6 +1579,83 @@ def issue_cert(domain, email):
     if r.returncode != 0:
         return False, f"证书申请失败: {(r.stderr or r.stdout).strip()[:300]}"
     return True, "证书已签发"
+
+
+def acme_available():
+    """acme.sh 是否已安装"""
+    return os.path.exists(ACME_SH)
+
+
+def install_acme_sh():
+    """安装 acme.sh（~/.acme.sh，root 用户；自带自动续期 cron）"""
+    try:
+        r = subprocess.run(["curl", "-fsSL", "https://get.acme.sh"],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return False
+        r2 = subprocess.run(["sh"], input=r.stdout, capture_output=True, text=True, timeout=120)
+        return r2.returncode == 0 and acme_available()
+    except Exception:
+        return False
+
+
+def issue_cert_dns(domain, email, provider, creds):
+    """acme.sh DNS 验证申请证书（Cloudflare/DNSPod/阿里云），证书装到 LE_LIVE 与 certbot 同路径。
+
+    凭证经环境变量传入（acme.sh 会自动持久化到 ~/.acme.sh/account.conf 供自动续期使用），
+    面板不落盘凭证文件、API 不回显。"""
+    prov = DNS_PROVIDERS.get(provider)
+    if not prov:
+        return False, f"不支持的 DNS 提供商: {provider}（支持: {', '.join(DNS_PROVIDERS)}）"
+    if not acme_available() and not install_acme_sh():
+        return False, "acme.sh 安装失败，请手动执行: curl https://get.acme.sh | sh"
+    env = dict(os.environ)
+    missing = []
+    for key, label in prov["fields"]:
+        val = str(creds.get(key) or "").strip()
+        if not val:
+            missing.append(label)
+        else:
+            env[key] = val
+    if missing:
+        return False, f"缺少凭证: {'、'.join(missing)}"
+    if email:
+        env["ACME_EMAIL"] = email
+    os.makedirs(f"{LE_LIVE}/{domain}", exist_ok=True)
+    try:
+        cmd = [ACME_SH, "--issue", "-d", domain, "--dns", prov["dns"],
+               "--server", "letsencrypt", "--force"]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+        if r.returncode != 0:
+            return False, f"证书申请失败: {(r.stderr or r.stdout).strip()[:300]}"
+        install = [ACME_SH, "--install-cert", "-d", domain,
+                   "--fullchain-file", f"{LE_LIVE}/{domain}/fullchain.pem",
+                   "--key-file", f"{LE_LIVE}/{domain}/privkey.pem",
+                   "--reloadcmd", "nginx -s reload || true"]
+        r2 = subprocess.run(install, capture_output=True, text=True, timeout=60, env=env)
+        if r2.returncode != 0:
+            return False, f"证书已签发但安装失败: {(r2.stderr or r2.stdout).strip()[:300]}"
+    except FileNotFoundError:
+        return False, "acme.sh 不可用"
+    except subprocess.TimeoutExpired:
+        return False, "DNS 证书申请超时（300 秒）"
+    return True, "证书已签发（DNS 验证）"
+
+
+def renew_cert_dns(domain):
+    """手动续期 DNS 验证的证书（acme.sh --renew），续期后自动重装证书 + reload nginx"""
+    if not acme_available():
+        return False, "acme.sh 未安装"
+    try:
+        r = subprocess.run([ACME_SH, "--renew", "-d", domain, "--force"],
+                           capture_output=True, text=True, timeout=300)
+    except FileNotFoundError:
+        return False, "acme.sh 不可用"
+    except subprocess.TimeoutExpired:
+        return False, "续期超时（5 分钟）"
+    if r.returncode != 0:
+        return False, f"续期失败: {(r.stderr or r.stdout).strip()[:300]}"
+    return True, "证书已续期（DNS 验证）"
 
 
 def renew_cert(domain):
@@ -2810,17 +2927,34 @@ class PanelHandler(BaseHTTPRequestHandler):
         if latest is None:
             self._send(502, {"error": "无法连接版本服务器，请稍后再试"})
             return
+        pre = get_latest_prerelease()
+        prerelease_info = None
+        if pre:
+            prerelease_info = {
+                "tag": pre,
+                "update_available": version_gt(pre, CURRENT_VERSION),
+            }
         self._send(200, {
             "current": CURRENT_VERSION,
             "latest": latest,
             "update_available": version_gt(latest, CURRENT_VERSION),
+            "prerelease": prerelease_info,
         })
 
     def _api_upgrade(self):
         token = self._require_auth()
         if token is None:
             return
-        ok, msg = perform_upgrade()
+        data = self._read_json() or {}
+        channel = str(data.get("channel", "stable"))
+        if channel == "beta":
+            tag = get_latest_prerelease()
+            if not tag:
+                self._send(400, {"error": "没有可用的测试版"})
+                return
+            ok, msg = perform_upgrade(tag=tag)
+        else:
+            ok, msg = perform_upgrade()
         if not ok:
             self._send(500, {"error": msg})
             return
@@ -3530,8 +3664,9 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         store = load_cert_store()
         items = []
-        for domain, email in store.items():
-            item = {"domain": domain, "email": email,
+        for domain, entry in store.items():
+            email, method, provider = _cert_meta(entry)
+            item = {"domain": domain, "email": email, "method": method, "provider": provider,
                     "cert_exists": cert_files_exist(domain),
                     "cert_expiry": cert_status(domain)}
             if item["cert_exists"]:
@@ -3546,15 +3681,33 @@ class PanelHandler(BaseHTTPRequestHandler):
         })
 
     def _api_cert_add(self):
-        """单独申请 SSL 证书：{domain, email?}（certbot webroot，需 80 可达）"""
+        """单独申请 SSL 证书：{domain, email?, method?: http|dns, provider?, credentials?}
+
+        http = certbot webroot（需 80 可达）；dns = acme.sh DNS 验证（Cloudflare/DNSPod/阿里云）"""
         token = self._require_auth()
         if token is None:
             return
         data = self._read_json()
         domain = str(data.get("domain", "")).strip().lower()
         email = str(data.get("email", "")).strip()
+        method = str(data.get("method", "http")).strip().lower()
         if not re.match(r"^[a-zA-Z0-9.\-*]+$", domain) or not domain:
             self._send(400, {"error": "域名格式无效（如 example.com 或 *.example.com）"})
+            return
+        if method == "dns":
+            provider = str(data.get("provider", "")).strip()
+            creds = data.get("credentials") or {}
+            ok, msg = issue_cert_dns(domain, email, provider, creds)
+            if not ok:
+                self._send(500, {"error": msg})
+                return
+            store = load_cert_store()
+            store[domain] = {"email": email, "method": "dns", "provider": provider}
+            save_cert_store(store)
+            self._send(200, {"ok": True, "msg": f"{domain} 证书已签发（DNS 验证）"})
+            return
+        if method != "http":
+            self._send(400, {"error": "method 必须是 http 或 dns"})
             return
         if not nginx_available():
             self._send(400, {"error": "未安装 nginx，请先在反向代理模块一键安装（ACME 挑战需要）"})
@@ -3569,7 +3722,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(500, {"error": msg})
             return
         store = load_cert_store()
-        store[domain] = email
+        store[domain] = {"email": email, "method": "http"}
         save_cert_store(store)
         self._send(200, {"ok": True, "msg": f"{domain} 证书已签发"})
 
@@ -3586,7 +3739,11 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "该域名不在独立证书列表中"})
             return
         if action == "renew":
-            ok, msg = renew_cert(domain)
+            email, method, provider = _cert_meta(store.get(domain))
+            if method == "dns":
+                ok, msg = renew_cert_dns(domain)
+            else:
+                ok, msg = renew_cert(domain)
             if not ok:
                 self._send(500, {"error": msg})
                 return

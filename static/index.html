@@ -270,6 +270,7 @@ tr:hover td { background: var(--panel-solid); }
         <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
           <button class="btn mini ghost" onclick="checkUpgrade()">检查更新</button>
           <button class="btn mini" id="btn_upgrade" onclick="doUpgrade()" disabled>升级</button>
+          <button class="btn mini" id="btn_upgrade_beta" onclick="doUpgradeBeta()" disabled style="display:none;background:linear-gradient(135deg,#fbbf24,#f59e0b)">升级测试版</button>
         </div>
       </div>
     </div>
@@ -440,9 +441,19 @@ tr:hover td { background: var(--panel-solid); }
       <div class="form-row" style="margin-bottom:8px">
         <input id="cert_domain" placeholder="域名（如 example.com，不含 http）" style="flex:1;min-width:160px">
         <input id="cert_email" placeholder="邮箱（到期通知，可留空）" style="flex:1;min-width:160px">
+        <select id="cert_method" onchange="certMethodChange()">
+          <option value="http">HTTP-01 验证</option>
+          <option value="dns">DNS 验证</option>
+        </select>
+        <select id="cert_provider" style="display:none">
+          <option value="cf">Cloudflare</option>
+          <option value="dp">DNSPod（腾讯云）</option>
+          <option value="ali">阿里云</option>
+        </select>
         <button class="btn" onclick="addCert()">申请证书</button>
       </div>
-      <div style="color:var(--muted);font-size:12px;margin-bottom:12px">certbot webroot 模式：需 80 端口公网可达、域名已解析到本机、nginx 已安装（未装可先在反向代理模块一键安装）</div>
+      <div id="cert_dns_fields" style="display:none;margin-bottom:8px;padding:10px 12px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px"></div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:12px">HTTP-01（certbot webroot）：需 80 端口公网可达、域名解析到本机。DNS 验证（acme.sh）：无需 80 端口，通过 Cloudflare/DNSPod/阿里云 API 自动添加验证记录，支持通配符</div>
       <div style="border-top:1px dashed var(--border);margin:0 0 10px"></div>
       <div style="display:flex;align-items:center;font-size:13px;font-weight:600;margin-bottom:8px"><svg class="h-ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg> 已申请证书</div>
       <div class="table-wrap">
@@ -934,7 +945,7 @@ async function loadCerts() {
       const exp = c.cert_exists
         ? (c.cert_expiry ? `有效至 ${new Date(c.cert_expiry * 1000).toLocaleDateString()}` : "已签发")
         : "未签发";
-      tr.innerHTML = `<td>${c.domain}</td><td style="color:var(--muted);font-size:12px">${exp}</td>
+      tr.innerHTML = `<td>${c.domain}${c.method === "dns" ? '<span style="color:#f59e0b;font-size:11px;margin-left:6px">DNS</span>' : '<span style="color:var(--muted);font-size:11px;margin-left:6px">HTTP</span>'}</td><td style="color:var(--muted);font-size:12px">${exp}</td>
         <td>
           <button class="btn mini ghost" onclick="renewCertSolo('${c.domain}')">手动续期</button>
           <button class="btn mini ghost" onclick="showCertPathsSolo('${c.domain}')">显示路径</button>
@@ -944,15 +955,46 @@ async function loadCerts() {
     }
   } catch (e) { /* 静默 */ }
 }
+const CERT_PROVIDER_FIELDS = {
+  cf:  [["CF_Token", "Cloudflare API Token", "password"]],
+  dp:  [["DP_Id", "DNSPod ID", "text"], ["DP_Key", "DNSPod Token", "password"]],
+  ali: [["Ali_Key", "阿里云 AccessKey ID", "text"], ["Ali_Secret", "阿里云 AccessKey Secret", "password"]],
+};
+function certMethodChange() {
+  const dns = $("cert_method").value === "dns";
+  $("cert_provider").style.display = dns ? "inline-block" : "none";
+  $("cert_dns_fields").style.display = dns ? "block" : "none";
+  if (dns) renderCertProviderFields();
+}
+function renderCertProviderFields() {
+  const prov = $("cert_provider").value;
+  const fields = CERT_PROVIDER_FIELDS[prov] || [];
+  $("cert_dns_fields").innerHTML = fields.map(([k, label, type]) =>
+    `<div style="margin:6px 0"><label style="color:var(--muted);font-size:12px">${label}：</label><input type="${type}" id="cert_cred_${k}" placeholder="${k}" style="width:300px;max-width:100%;margin-left:8px"></div>`
+  ).join("") + '<div style="color:var(--muted);font-size:11px;margin-top:4px">凭证仅本次使用，acme.sh 自动保存用于续期，面板不存储</div>';
+}
 async function addCert() {
   const domain = $("cert_domain").value.trim();
   if (!domain) { toast("请输入域名", "err"); return; }
   const email = $("cert_email").value.trim();
-  confirmPanel(`确认申请 ${domain} 的 SSL 证书？\n\ncertbot webroot 模式：需 80 端口公网可达、域名已解析到本机。\n申请约 10-60 秒，期间页面等待属正常。`, () => {
+  const method = $("cert_method").value;
+  const provider = method === "dns" ? $("cert_provider").value : "";
+  let creds = {};
+  if (method === "dns") {
+    const fields = CERT_PROVIDER_FIELDS[provider] || [];
+    for (const [k] of fields) {
+      const v = $("cert_cred_" + k).value.trim();
+      if (v) creds[k] = v;
+    }
+  }
+  const confirmText = method === "dns"
+    ? `确认申请 ${domain} 的 SSL 证书？\n\nDNS 验证（${provider === "cf" ? "Cloudflare" : provider === "dp" ? "DNSPod" : "阿里云"}）：无需 80 端口，通过 DNS API 自动验证。\n申请约 10-60 秒，期间页面等待属正常。`
+    : `确认申请 ${domain} 的 SSL 证书？\n\ncertbot webroot 模式：需 80 端口公网可达、域名已解析到本机。\n申请约 10-60 秒，期间页面等待属正常。`;
+  confirmPanel(confirmText, () => {
     const st = $("cert_status");
     st.textContent = "⏳ 正在申请，请稍候（最多 180 秒）...";
     st.style.color = "";
-    api("POST", "/api/cert", { domain, email }).then(d => {
+    api("POST", "/api/cert", { domain, email, method, provider, credentials: creds }).then(d => {
       toast(d.msg || "证书已签发", "okk");
       $("cert_domain").value = ""; $("cert_email").value = "";
       loadCerts(); loadProxy();  // 反代列表 SSL 状态列同步刷新
@@ -1849,6 +1891,15 @@ let lastUpgradeCheck = 0;
 function renderUpgradeUi(d) {
   $("st_latest").textContent = d.update_available ? `新版 v${d.latest}` : "已是最新";
   $("btn_upgrade").disabled = !d.update_available;
+  const beta = d.prerelease;
+  const btnBeta = $("btn_upgrade_beta");
+  if (beta) {
+    btnBeta.style.display = "inline-block";
+    btnBeta.disabled = !beta.update_available;
+    btnBeta.textContent = beta.update_available ? `升级测试版 v${beta.tag}` : `测试版 v${beta.tag}（已是最新）`;
+  } else {
+    btnBeta.style.display = "none";
+  }
 }
 async function checkUpgrade() {
   const now = Date.now();
@@ -1885,6 +1936,22 @@ async function doUpgrade() {
       checkUpgrade();
     });
   }, "🔄 升级确认");
+}
+
+async function doUpgradeBeta() {
+  if (!upgradeInfo || !upgradeInfo.prerelease || !upgradeInfo.prerelease.update_available) return;
+  confirmPanel(`确认升级到测试版 v${upgradeInfo.prerelease.tag}？\n\n⚠ 测试版包含未稳定功能，如遇问题可在面板检查更新中重新安装稳定版。\n升级过程约 10-30 秒，完成后需重新登录。`, () => {
+    const btn = $("btn_upgrade_beta");
+    btn.disabled = true; btn.textContent = "升级中...";
+    api("POST", "/api/upgrade", { channel: "beta" }).then(d => {
+      toast(d.msg || "升级成功", "okk");
+      setTimeout(() => { location.reload(); }, 4000);
+    }).catch(e => {
+      toast("升级失败: " + e.message, "err");
+      btn.disabled = false; btn.textContent = "升级测试版";
+      checkUpgrade();
+    });
+  }, "🧪 测试版确认");
 }
 
 /* ---------- 服务开关 ---------- */
