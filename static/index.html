@@ -438,7 +438,8 @@ tr:hover td { background: var(--panel-solid); }
 
     <div class="panel" data-sec="px">
       <h2><svg class="h-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> 单独申请 SSL 证书</h2>
-      <div id="cert_status" style="color:var(--muted);font-size:12px;margin-bottom:10px">检测中...</div>
+      <div id="cert_status" style="color:var(--muted);font-size:12px;margin-bottom:6px">检测中...</div>
+      <div id="cert_creds_row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--muted)"></div>
       <div class="form-row" style="margin-bottom:8px">
         <input id="cert_domain" placeholder="域名（如 example.com，不含 http）" style="flex:1;min-width:160px">
         <input id="cert_email" placeholder="邮箱（到期通知，可留空）" style="flex:1;min-width:160px">
@@ -936,6 +937,14 @@ async function loadCerts() {
   try {
     const d = await api("GET", "/api/cert");
     dnsCredsStatus = d.dns_creds || {};
+    // 凭证保存状态常显行（v1.25.5：不依赖 DNS 模式切换也能看到/清除）
+    const credsRow = $("cert_creds_row");
+    credsRow.innerHTML = "🔑 DNS 凭证：" + ["cf", "dp", "ali"].map(p => {
+      const saved = !!dnsCredsStatus[p];
+      return `<span style="margin-right:12px">${PROVIDER_NAMES[p]} ${saved
+        ? `<span style="color:var(--accent2)">✓ 已保存</span> <button class="btn mini danger" onclick="clearCertCreds('${p}')">清除</button>`
+        : "—"}</span>`;
+    }).join("");
     const st = $("cert_status");
     st.style.color = "";
     st.textContent = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（需先一键安装）")
@@ -982,14 +991,15 @@ function renderCertProviderFields() {
     ? `<div style="color:var(--accent2);font-size:11px;margin-top:4px">✅ ${PROVIDER_NAMES[prov]} 凭证已保存，留空即可使用 <button class="btn mini danger" onclick="clearCertCreds()">清除</button></div>`
     : '<div style="color:var(--muted);font-size:11px;margin-top:4px">凭证保存后下次申请无需重复输入，可在面板清除</div>');
 }
-async function clearCertCreds() {
-  const prov = $("cert_provider").value;
+async function clearCertCreds(prov) {
+  if (!prov) prov = $("cert_provider").value;
   confirmPanel(`确认清除已保存的 ${PROVIDER_NAMES[prov]} 凭证？\n\n清除后下次申请需重新输入。`, async () => {
     try {
       const d = await api("POST", "/api/cert/creds", { provider: prov });
       toast(d.msg || "已清除", "okk");
       dnsCredsStatus[prov] = false;
       renderCertProviderFields();
+      loadCerts();
     } catch (e) { toast(e.message, "err"); }
   }, "🗑 清除凭证");
 }
