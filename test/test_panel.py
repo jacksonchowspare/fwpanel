@@ -1630,6 +1630,62 @@ class TestUpgrade(unittest.TestCase):
         with open(os.path.join(self.app_tmp, "panel.py")) as f:
             self.assertIn("1.26.0", f.read())
 
+    def test_resume_ssh_switch_watch(self):
+        """启动恢复：残留切换保护规则 → 恢复监控线程（v1.25.6）"""
+        if os.path.exists(panel.RULES_FILE):
+            os.remove(panel.RULES_FILE)
+        store = panel.RuleStore()
+        store.add({"type": "port_allow", "proto": "tcp", "port": 22,
+                   "comment": panel.SSH_OLD_PORT_COMMENT})
+        store.add({"type": "port_allow", "proto": "tcp", "port": 42606,
+                   "comment": "SSH保护(安装自动放行)"})
+        cfg = panel.Config()
+        cfg.set("ssh_port", 42606)
+        started = []
+        real_thread = panel.threading.Thread
+
+        class FakeThread:
+            def __init__(self, target, args=(), daemon=False):
+                started.append((target, args))
+            def start(self):
+                pass
+        panel.threading.Thread = FakeThread
+        try:
+            ok = panel.resume_ssh_switch_watch(store, cfg)
+            self.assertTrue(ok)
+            self.assertEqual(len(started), 1)
+            self.assertEqual(started[0][1], (22, 42606))
+        finally:
+            panel.threading.Thread = real_thread
+            if os.path.exists(panel.RULES_FILE):
+                os.remove(panel.RULES_FILE)
+
+    def test_resume_ssh_switch_watch_none(self):
+        """无残留切换保护规则 → 不启动监控"""
+        if os.path.exists(panel.RULES_FILE):
+            os.remove(panel.RULES_FILE)
+        store = panel.RuleStore()
+        store.add({"type": "port_allow", "proto": "tcp", "port": 42606,
+                   "comment": "SSH保护(安装自动放行)"})
+        cfg = panel.Config()
+        started = []
+        real_thread = panel.threading.Thread
+
+        class FakeThread:
+            def __init__(self, target, args=(), daemon=False):
+                started.append(1)
+            def start(self):
+                pass
+        panel.threading.Thread = FakeThread
+        try:
+            ok = panel.resume_ssh_switch_watch(store, cfg)
+            self.assertFalse(ok)
+            self.assertEqual(len(started), 0)
+        finally:
+            panel.threading.Thread = real_thread
+            if os.path.exists(panel.RULES_FILE):
+                os.remove(panel.RULES_FILE)
+
     def test_version_compare(self):
         self.assertTrue(panel.version_gt("1.10.0", "1.9.0"))
         self.assertTrue(panel.version_gt("1.2.1", "1.2.0"))

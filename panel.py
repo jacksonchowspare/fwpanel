@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.25.5"
+CURRENT_VERSION = "1.25.6"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -4358,6 +4358,25 @@ def cmd_open_port(port, proto="tcp"):
         if r.get("type") == "port_allow") or "（无）")
 
 
+def resume_ssh_switch_watch(store, config):
+    """v1.25.6：面板启动时检测残留的「旧SSH端口-切换保护」规则并恢复监控线程。
+
+    解决：改 SSH 端口后面板重启/升级（systemd restart）导致 watch_ssh_switch 线程丢失、
+    旧端口放行规则永远残留的问题（2026-08-22 Oracle 实例实测：22 端口规则残留到下次手动清理）。"""
+    old_rules = [r for r in store.rules
+                 if r.get("type") == "port_allow" and r.get("comment") == SSH_OLD_PORT_COMMENT]
+    if not old_rules:
+        return False
+    new_port = int(config.get("ssh_port", SSH_PORT_DEFAULT))
+    for r in old_rules:
+        old_port = int(r.get("port"))
+        if old_port == new_port:
+            continue
+        threading.Thread(target=watch_ssh_switch, args=(old_port, new_port), daemon=True).start()
+        log(f"检测到残留 SSH 切换保护（旧端口 {old_port} → 新端口 {new_port}），已恢复监控线程")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="fwpanel 简易VPS控制面板")
     parser.add_argument("cmd", nargs="?", default="serve",
@@ -4395,6 +4414,8 @@ def main():
     # 自动同步 SSH 保护端口到系统实际端口（防锁死保护跟随当前 SSH 端口，手动设置后停止）
     sync_ssh_port(config)
     store = RuleStore()
+    # v1.25.6：恢复残留的 SSH 切换保护监控（面板重启/升级后线程丢失的补救）
+    resume_ssh_switch_watch(store, config)
     nft = NFTManager(store, config)
     auth = Auth(config)
     server = PanelServer((bind, port), PanelHandler, config, store, nft, auth)
