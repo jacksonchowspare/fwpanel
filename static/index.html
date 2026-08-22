@@ -955,7 +955,7 @@ async function addCert() {
     api("POST", "/api/cert", { domain, email }).then(d => {
       toast(d.msg || "证书已签发", "okk");
       $("cert_domain").value = ""; $("cert_email").value = "";
-      loadCerts();
+      loadCerts(); loadProxy();  // 反代列表 SSL 状态列同步刷新
     }).catch(e => {
       toast(e.message, "err");
       st.textContent = "❌ 申请失败：" + e.message;
@@ -966,14 +966,14 @@ async function addCert() {
 function renewCertSolo(domain) {
   confirmPanel(`确认手动续期 ${domain} 的证书？\n\n将强制重新签发（绕过自动续期），需要 80 端口可访问。`, () => {
     api("POST", "/api/cert/" + domain, { action: "renew" }).then(d => {
-      toast(d.msg || "续期成功", "okk"); loadCerts();
+      toast(d.msg || "续期成功", "okk"); loadCerts(); loadProxy();
     }).catch(e => toast(e.message, "err"));
   }, "🔄 续期确认");
 }
 function delCert(domain) {
   confirmPanel(`确认将 ${domain} 从独立证书列表移除？\n\n仅移除记录，证书文件保留（其他服务可继续引用）。`, () => {
     api("POST", "/api/cert/" + domain, { action: "delete" }).then(d => {
-      toast(d.msg || "已移除", "okk"); loadCerts();
+      toast(d.msg || "已移除", "okk"); loadCerts(); loadProxy();
     }).catch(e => toast(e.message, "err"));
   }, "🗑 移除证书");
 }
@@ -1549,15 +1549,21 @@ async function delProxy(id) {
 async function issueSsl(id) {
   const email = prompt("请输入邮箱（用于证书过期通知，可留空）：", "");
   if (email === null) return;
+  toast("⏳ 证书申请中（约 10-60 秒），请稍候...");
   try {
     const d = await api("POST", "/api/proxy/" + id, { action: "ssl", email });
-    toast(d.msg || "证书已申请", "okk"); loadProxy();
+    toast(d.msg || "证书已申请", "okk");
+    loadProxy(); loadCerts();
+    // 证书生效后 nginx 会把 http 301 到 https——域名访问时主动跳转 https，避免列表状态停留在旧页面
+    if (location.protocol === "http:" && !/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname)) {
+      setTimeout(() => { location.href = location.href.replace(/^http:/, "https:"); }, 800);
+    }
   } catch (e) { toast(e.message, "err"); }
 }
 async function renewCert(id) {
   confirmPanel("确认手动续期该证书？\n\n将强制重新签发（绕过自动续期），需要 80 端口可访问。", () => {
     api("POST", "/api/proxy/" + id, { action: "renew" }).then(d => {
-      toast(d.msg || "续期成功", "okk"); loadProxy();
+      toast(d.msg || "续期成功", "okk"); loadProxy(); loadCerts();
     }).catch(e => toast(e.message, "err"));
   }, "🔄 续期确认");
 }
