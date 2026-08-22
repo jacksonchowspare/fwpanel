@@ -412,6 +412,7 @@ tr:hover td { background: var(--panel-solid); }
         <input id="px_host" placeholder="目标 IP/主机">
         <input id="px_port" placeholder="端口" inputmode="numeric">
         <select id="px_scheme"><option value="http">http</option><option value="https">https</option></select>
+        <select id="px_cert" title="选择已申请的证书复用（泛域名也可），或自动申请"><option value="">自动申请</option></select>
         <label style="display:flex;align-items:center;gap:4px;justify-self:center;font-size:12px;color:var(--muted);cursor:pointer"><input type="checkbox" id="px_ws"> WebSocket</label>
         <label style="display:flex;align-items:center;gap:4px;justify-self:center;font-size:12px;color:var(--muted);cursor:pointer" title="HTTP Strict Transport Security：强制浏览器 HTTPS 访问（仅 HTTPS 代理生效）"><input type="checkbox" id="px_hsts"> HSTS</label>
         <button class="btn" onclick="addProxy()">添加代理</button>
@@ -785,6 +786,7 @@ tr:hover td { background: var(--panel-solid); }
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <span style="font-size:13px">协议</span>
         <select id="pxe_scheme" style="flex:1"><option value="http">http</option><option value="https">https</option></select>
+        <select id="pxe_cert" style="flex:1" title="更换引用的证书（空=自动申请）"></select>
       </div>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="pxe_ws" style="width:auto;flex:none"> WebSocket 支持</label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="HTTP Strict Transport Security：强制浏览器 HTTPS 访问（仅 HTTPS 代理生效）"><input type="checkbox" id="pxe_hsts" style="width:auto;flex:none"> HSTS（强制 HTTPS，1 年含子域名）</label>
@@ -945,7 +947,8 @@ async function loadCerts() {
       const exp = c.cert_exists
         ? (c.cert_expiry ? `有效至 ${new Date(c.cert_expiry * 1000).toLocaleDateString()}` : "已签发")
         : "未签发";
-      tr.innerHTML = `<td>${c.domain}${c.method === "dns" ? '<span style="color:#f59e0b;font-size:11px;margin-left:6px">DNS</span>' : '<span style="color:var(--muted);font-size:11px;margin-left:6px">HTTP</span>'}</td><td style="color:var(--muted);font-size:12px">${exp}</td>
+      const srcTag = c.source === "proxy" ? '<span style="color:var(--muted);font-size:11px;margin-left:6px">反代</span>' : "";
+      tr.innerHTML = `<td>${c.domain}${c.method === "dns" ? '<span style="color:#f59e0b;font-size:11px;margin-left:6px">DNS</span>' : '<span style="color:var(--muted);font-size:11px;margin-left:6px">HTTP</span>'}${srcTag}</td><td style="color:var(--muted);font-size:12px">${exp}</td>
         <td>
           <button class="btn mini ghost" onclick="renewCertSolo('${c.domain}')">手动续期</button>
           <button class="btn mini ghost" onclick="showCertPathsSolo('${c.domain}')">显示路径</button>
@@ -1469,17 +1472,21 @@ async function toggleBbr() {
 
 /* ---------- 代理编辑 ---------- */
 let pxeId = null;
-function editProxy(id) {
-  api("GET", "/api/proxy").then(d => {
+async function editProxy(id) {
+  try {
+    const d = await api("GET", "/api/proxy");
     const p = d.proxies.find(x => x.id === id);
     if (!p) { toast("代理不存在", "err"); return; }
     pxeId = id;
     $("pxe_domain").textContent = p.domain;
     $("pxe_scheme").value = p.scheme || "http";
+    await loadCertOptions();
+    $("pxe_cert").innerHTML = certOptionsHtml(p.cert_ref || "");
+    $("pxe_cert").value = p.cert_ref || "";
     $("pxe_ws").checked = !!p.websocket;
     $("pxe_hsts").checked = !!p.hsts;
     $("pxe_modal").classList.remove("hidden");
-  }).catch(e => toast(e.message, "err"));
+  } catch (e) { toast(e.message, "err"); }
 }
 function closePxEdit() { $("pxe_modal").classList.add("hidden"); pxeId = null; }
 async function savePxEdit() {
@@ -1487,6 +1494,7 @@ async function savePxEdit() {
   try {
     const d = await api("POST", "/api/proxy/" + pxeId, {
       action: "edit", scheme: $("pxe_scheme").value,
+      cert_ref: $("pxe_cert").value,
       websocket: $("pxe_ws").checked, hsts: $("pxe_hsts").checked,
     });
     toast(d.msg || "已保存", "okk");
@@ -1498,6 +1506,24 @@ async function savePxEdit() {
 let pxPage = 1;
 const PX_PAGE_SIZE = 5;
 let pxSearch = "";
+let certOptionsCache = [];
+async function loadCertOptions() {
+  try {
+    const d = await api("GET", "/api/cert");
+    const now = Date.now() / 1000;
+    certOptionsCache = (d.certs || []).filter(c => c.cert_exists && (!c.cert_expiry || c.cert_expiry > now));
+  } catch (e) { certOptionsCache = []; }
+  return certOptionsCache;
+}
+function certOptionsHtml(selected) {
+  let html = '<option value="">自动申请（为代理域名申请）</option>';
+  for (const c of certOptionsCache) {
+    const exp = c.cert_expiry ? `（${new Date(c.cert_expiry * 1000).toLocaleDateString()} 到期）` : "";
+    const sel = selected === c.domain ? " selected" : "";
+    html += `<option value="${c.domain}"${sel}>${c.domain}${exp}</option>`;
+  }
+  return html;
+}
 function pxPageGo(d) { pxPage += d; loadProxy(); }
 function pxSearchChanged() { pxSearch = $("px_search").value.trim().toLowerCase(); pxPage = 1; loadProxy(); }
 async function loadProxy() {
@@ -1509,6 +1535,9 @@ async function loadProxy() {
       + (d.certbot ? " · certbot 就绪" : " · ⚠ certbot 未安装")
       + fmtRenew(d.renew);
     $("px_install_row").style.display = (d.installed && d.certbot) ? "none" : "flex";
+    // 证书选择框数据（v1.25.2：复用已申请证书，含泛域名）
+    await loadCertOptions();
+    $("px_cert").innerHTML = certOptionsHtml("");
     const tbody = $("proxy_rows"); tbody.innerHTML = "";
     // 搜索过滤
     const filtered = pxSearch ? d.proxies.filter(p =>
@@ -1529,9 +1558,11 @@ async function loadProxy() {
       const cert = p.cert_exists
         ? (p.cert_expiry ? `有效至 ${new Date(p.cert_expiry * 1000).toLocaleDateString()}` : "已签发")
         : (p.ssl ? "未签发" : "未申请");
+      const certRefTag = p.cert_ref ? `<span style="color:#4da3ff;font-size:11px;margin-right:6px">使用证书 ${p.cert_ref}</span>` : "";
       const certCell = p.cert_exists
-        ? `${cert} <button class="btn mini ghost" onclick="renewCert('${p.id}')">手动续期</button> <button class="btn mini ghost" onclick="showCertPaths('${p.id}')">显示路径</button>`
-        : (p.ssl ? "未签发" : `<button class="btn mini" onclick="issueSsl('${p.id}')">申请证书</button>`);
+        ? `${certRefTag}${cert} <button class="btn mini ghost" onclick="renewCert('${p.id}')">手动续期</button> <button class="btn mini ghost" onclick="showCertPaths('${p.id}')">显示路径</button>`
+        : (p.cert_ref ? `${certRefTag}<span style="color:var(--danger)">⚠ 证书缺失</span> <button class="btn mini ghost" onclick="editProxy('${p.id}')">更换</button>`
+           : (p.ssl ? "未签发" : `<button class="btn mini" onclick="issueSsl('${p.id}')">申请证书</button>`));
       const ipBtn = p.block_ip
         ? `<button class="btn mini" style="background:var(--accent2)" onclick="toggleBlockIp('${p.id}', false)">禁止IP访问中</button>`
         : `<button class="btn mini ghost" onclick="toggleBlockIp('${p.id}', true)">禁止IP+端口访问</button>`;
@@ -1570,6 +1601,7 @@ async function addProxy() {
     const d = await api("POST", "/api/proxy", {
       domain: $("px_domain").value.trim(), target_host: $("px_host").value.trim(),
       target_port: $("px_port").value.trim(), scheme: $("px_scheme").value,
+      cert_ref: $("px_cert").value,
       websocket: $("px_ws").checked,
       hsts: $("px_hsts").checked,
     });

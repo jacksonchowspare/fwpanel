@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.25.1"
+CURRENT_VERSION = "1.25.2"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1285,10 +1285,11 @@ DNS_PROVIDERS = {
 
 
 def _cert_meta(entry):
-    """兼容新旧 certificates.json 结构：str=旧版 webroot，dict=新版 {email, method, provider}"""
+    """兼容新旧 certificates.json 结构：str=旧版 webroot，dict=新版 {email, method, provider, source}"""
     if isinstance(entry, dict):
-        return str(entry.get("email", "")), str(entry.get("method", "http")), str(entry.get("provider", ""))
-    return str(entry or ""), "http", ""
+        return (str(entry.get("email", "")), str(entry.get("method", "http")),
+                str(entry.get("provider", "")), str(entry.get("source", "independent")))
+    return str(entry or ""), "http", "", "independent"
 
 
 def load_cert_store():
@@ -1468,9 +1469,21 @@ def host_guard(domain):
     return f'    if ($host != "{domain}") {{ return 444; }}\n'
 
 
+def _proxy_cert(domain, cert_ref):
+    """反代证书解析：cert_ref 指定引用的证书（可为 *.example.com 泛域名），否则用反代自身域名。
+    返回 (ssl_on, fullchain, key)"""
+    ref = (cert_ref or "").strip()
+    if not ref:
+        ref = domain
+    fc = os.path.join(LE_LIVE, ref, "fullchain.pem")
+    if os.path.isfile(fc):
+        return True, fc, os.path.join(LE_LIVE, ref, "privkey.pem")
+    return False, None, None
+
+
 def render_proxy_conf(p):
     """生成 nginx server block 配置（含 ACME 挑战路径、HTTP→HTTPS 跳转、WebSocket 支持）"""
-    ssl_on = bool(p.get("ssl")) and cert_files_exist(p["domain"])
+    ssl_on, ssl_fc, ssl_key = _proxy_cert(p["domain"], p.get("cert_ref"))
     ws = bool(p.get("websocket"))
     hsts = bool(p.get("hsts"))
     block_ip = bool(p.get("block_ip"))
@@ -1505,8 +1518,8 @@ def render_proxy_conf(p):
         lines.append("server {")
         lines.append("    listen 443 ssl;")
         lines.append(f"    server_name {p['domain']};")
-        lines.append(f"    ssl_certificate {LE_LIVE}/{p['domain']}/fullchain.pem;")
-        lines.append(f"    ssl_certificate_key {LE_LIVE}/{p['domain']}/privkey.pem;")
+        lines.append(f"    ssl_certificate {ssl_fc};")
+        lines.append(f"    ssl_certificate_key {ssl_key};")
         if hsts:
             lines.append('        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;')
         if guard:
@@ -3665,8 +3678,9 @@ class PanelHandler(BaseHTTPRequestHandler):
         store = load_cert_store()
         items = []
         for domain, entry in store.items():
-            email, method, provider = _cert_meta(entry)
+            email, method, provider, source = _cert_meta(entry)
             item = {"domain": domain, "email": email, "method": method, "provider": provider,
+                    "source": source,
                     "cert_exists": cert_files_exist(domain),
                     "cert_expiry": cert_status(domain)}
             if item["cert_exists"]:
@@ -3739,7 +3753,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "该域名不在独立证书列表中"})
             return
         if action == "renew":
-            email, method, provider = _cert_meta(store.get(domain))
+            email, method, provider, source = _cert_meta(store.get(domain))
             if method == "dns":
                 ok, msg = renew_cert_dns(domain)
             else:
@@ -3762,11 +3776,14 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         items = []
         for p in ProxyStore().proxies:
-            item = {**p, "cert_expiry": cert_status(p["domain"]),
-                    "cert_exists": cert_files_exist(p["domain"])}
+            item = {**p}
+            ref = (p.get("cert_ref") or "").strip() or p["domain"]
+            item["cert_ref_resolved"] = ref
+            item["cert_expiry"] = cert_status(ref)
+            item["cert_exists"] = cert_files_exist(ref)
             if item["cert_exists"]:
-                item["cert_path"] = f"{LE_LIVE}/{p['domain']}/fullchain.pem"
-                item["key_path"] = f"{LE_LIVE}/{p['domain']}/privkey.pem"
+                item["cert_path"] = f"{LE_LIVE}/{ref}/fullchain.pem"
+                item["key_path"] = f"{LE_LIVE}/{ref}/privkey.pem"
             items.append(item)
         self._send(200, {
             "installed": nginx_available(),
@@ -3806,11 +3823,17 @@ class PanelHandler(BaseHTTPRequestHandler):
         if any(p["domain"] == domain for p in pstore.proxies):
             self._send(400, {"error": f"域名 {domain} 已存在代理"})
             return
+        # 证书引用（v1.25.2）：cert_ref 指定复用已申请证书（含 *.example.com 泛域名），空=自动申请
+        cert_ref = str(data.get("cert_ref", "") or "").strip().lower()
+        if cert_ref and not os.path.isfile(os.path.join(LE_LIVE, cert_ref, "fullchain.pem")):
+            self._send(400, {"error": f"证书不存在: {cert_ref}（请先在「单独申请 SSL 证书」申请，或选「自动申请」）"})
+            return
         p = pstore.add({
             "domain": domain, "target_host": host, "target_port": port,
             "scheme": scheme, "websocket": bool(data.get("websocket")),
             "hsts": bool(data.get("hsts")),
             "ssl": bool(data.get("ssl")),
+            "cert_ref": cert_ref,
         })
         # 防火墙放行反代入口端口（幂等）：ssl=true→443，http→80
         # ⚠ v1.24.64 修复：http 反代（ssl:false）nginx 监听 80，若不放行 80，
@@ -3866,11 +3889,25 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return
             p["ssl"] = True
             pstore.save()
+            # 反代申请的证书自动登记进证书列表（source=proxy，与独立申请统一管理）
+            store = load_cert_store()
+            if p["domain"] in store and isinstance(store[p["domain"]], dict):
+                store[p["domain"]]["source"] = "proxy"
+            else:
+                store[p["domain"]] = {"email": str(data.get("email", "")).strip(),
+                                      "method": "http", "source": "proxy"}
+            save_cert_store(store)
             ok2, msg2 = apply_proxies(pstore)
             tail = f"；{msg2}" if ok2 else f"；配置应用失败: {msg2}"
             self._send(200, {"ok": True, "msg": msg + tail})
         elif action == "renew":
-            ok, msg = renew_cert(p["domain"])
+            ref = (p.get("cert_ref") or "").strip() or p["domain"]
+            cstore = load_cert_store()
+            _, method, _, _ = _cert_meta(cstore.get(ref))
+            if method == "dns":
+                ok, msg = renew_cert_dns(ref)
+            else:
+                ok, msg = renew_cert(ref)
             if not ok:
                 self._send(500, {"error": msg})
                 return
@@ -3916,6 +3953,13 @@ class PanelHandler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "scheme 必须是 http 或 https"})
                     return
                 p["scheme"] = sc
+            # 证书引用可更换（v1.25.2）：空=自动申请/自身域名，非空=复用已申请证书
+            if "cert_ref" in data:
+                ref = str(data.get("cert_ref") or "").strip().lower()
+                if ref and not os.path.isfile(os.path.join(LE_LIVE, ref, "fullchain.pem")):
+                    self._send(400, {"error": f"证书不存在: {ref}（请先在「单独申请 SSL 证书」申请）"})
+                    return
+                p["cert_ref"] = ref
             p["websocket"] = bool(data.get("websocket", p.get("websocket", False)))
             p["hsts"] = bool(data.get("hsts", p.get("hsts", False)))
             pstore.save()

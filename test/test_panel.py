@@ -759,6 +759,72 @@ class TestAPI(unittest.TestCase):
         if os.path.exists(panel.PROXIES_FILE):
             os.remove(panel.PROXIES_FILE)
 
+    def test_proxy_cert_ref_api(self):
+        """反代证书引用 API：cert_ref 校验/解析/编辑更换 + 反代申请证书登记列表"""
+        code, d = self._req("POST", "/api/login",
+                            {"username": TEST_USER, "password": "NewPass123"})
+        self.assertEqual(code, 200)
+        token = d["token"]
+        if os.path.exists(panel.PROXIES_FILE):
+            os.remove(panel.PROXIES_FILE)
+        if os.path.exists(panel.CERT_FILE):
+            os.remove(panel.CERT_FILE)
+        # 准备一个"已申请"的泛域名证书文件（LE_LIVE 指向临时目录）
+        import tempfile as _tf
+        tmp_le = _tf.mkdtemp(prefix="fwpanel-le-")
+        wc_dir = os.path.join(tmp_le, "*.example.com")
+        os.makedirs(wc_dir)
+        with open(os.path.join(wc_dir, "fullchain.pem"), "w") as f:
+            f.write("fake-fullchain")
+        with open(os.path.join(wc_dir, "privkey.pem"), "w") as f:
+            f.write("fake-key")
+        old_le = panel.LE_LIVE
+        panel.LE_LIVE = tmp_le
+        real_issue, real_apply = panel.issue_cert, panel.apply_proxies
+        panel.issue_cert = lambda dom, email: (True, "证书已签发")
+        panel.apply_proxies = lambda store: (True, "nginx 已重载")
+        try:
+            # 添加反代引用泛域名证书
+            code, d = self._req("POST", "/api/proxy",
+                                {"domain": "sub.example.com", "target_host": "127.0.0.1",
+                                 "target_port": 8080, "cert_ref": "*.example.com"}, token=token)
+            self.assertEqual(code, 200, d)
+            pid = d["proxy"]["id"]
+            code, d = self._req("GET", "/api/proxy", token=token)
+            p = d["proxies"][0]
+            self.assertEqual(p["cert_ref"], "*.example.com")
+            self.assertEqual(p["cert_ref_resolved"], "*.example.com")
+            self.assertTrue(p["cert_exists"])
+            # 非法 cert_ref 拒绝
+            code, d = self._req("POST", "/api/proxy",
+                                {"domain": "bad.example.com", "target_host": "127.0.0.1",
+                                 "target_port": 8081, "cert_ref": "*.notexists.com"}, token=token)
+            self.assertEqual(code, 400)
+            self.assertIn("证书不存在", d["error"])
+            # 编辑更换 cert_ref（清空=自动申请）
+            code, d = self._req("POST", f"/api/proxy/{pid}",
+                                {"action": "edit", "cert_ref": ""}, token=token)
+            self.assertEqual(code, 200, d)
+            code, d = self._req("GET", "/api/proxy", token=token)
+            self.assertEqual(d["proxies"][0]["cert_ref"], "")
+            self.assertEqual(d["proxies"][0]["cert_ref_resolved"], "sub.example.com")
+            # 反代申请证书 → 自动登记进证书列表（source=proxy）
+            code, d = self._req("POST", f"/api/proxy/{pid}", {"action": "ssl"}, token=token)
+            self.assertEqual(code, 200, d)
+            code, d = self._req("GET", "/api/cert", token=token)
+            cert = [c for c in d["certs"] if c["domain"] == "sub.example.com"]
+            self.assertEqual(len(cert), 1, "反代申请的证书应登记进证书列表")
+            self.assertEqual(cert[0]["source"], "proxy")
+        finally:
+            panel.LE_LIVE = old_le
+            panel.issue_cert, panel.apply_proxies = real_issue, real_apply
+            import shutil as _sh
+            _sh.rmtree(tmp_le, ignore_errors=True)
+            if os.path.exists(panel.PROXIES_FILE):
+                os.remove(panel.PROXIES_FILE)
+            if os.path.exists(panel.CERT_FILE):
+                os.remove(panel.CERT_FILE)
+
     def test_proxy_install_api(self):
         """一键安装 API：缺组件时安装，装好后自动应用配置"""
         code, d = self._req("POST", "/api/login",
@@ -1727,8 +1793,8 @@ class TestUpgrade(unittest.TestCase):
 
     def test_render_proxy_conf(self):
         """nginx 反代配置生成：HTTP/ACME 挑战/WebSocket/HTTPS 跳转"""
-        real = panel.cert_files_exist
-        panel.cert_files_exist = lambda d: False
+        real_pc = panel._proxy_cert
+        panel._proxy_cert = lambda domain, ref: (False, None, None)  # 无证书
         try:
             conf = panel.render_proxy_conf({
                 "domain": "app.example.com", "target_host": "127.0.0.1",
@@ -1740,9 +1806,11 @@ class TestUpgrade(unittest.TestCase):
             self.assertIn("proxy_set_header Upgrade $http_upgrade;", conf)
             self.assertNotIn("listen 443", conf)
         finally:
-            panel.cert_files_exist = real
+            panel._proxy_cert = real_pc
         # 有证书时：HTTP 跳转 + HTTPS server
-        panel.cert_files_exist = lambda d: True
+        panel._proxy_cert = lambda domain, ref: (
+            True, "/etc/letsencrypt/live/app.example.com/fullchain.pem",
+            "/etc/letsencrypt/live/app.example.com/privkey.pem")
         try:
             conf = panel.render_proxy_conf({
                 "domain": "app.example.com", "target_host": "10.0.0.2",
@@ -1752,7 +1820,24 @@ class TestUpgrade(unittest.TestCase):
             self.assertIn("ssl_certificate /etc/letsencrypt/live/app.example.com/fullchain.pem;", conf)
             self.assertIn("return 301 https://$host$request_uri;", conf)
         finally:
-            panel.cert_files_exist = real
+            panel._proxy_cert = real_pc
+
+    def test_render_proxy_conf_cert_ref(self):
+        """反代引用泛域名证书（cert_ref=*.example.com）时 nginx 用泛域名证书路径"""
+        real_pc = panel._proxy_cert
+        panel._proxy_cert = lambda domain, ref: (
+            True, f"/etc/letsencrypt/live/{ref}/fullchain.pem",
+            f"/etc/letsencrypt/live/{ref}/privkey.pem")
+        try:
+            conf = panel.render_proxy_conf({
+                "domain": "sub.example.com", "target_host": "127.0.0.1",
+                "target_port": 8080, "scheme": "http", "websocket": False, "ssl": True,
+                "cert_ref": "*.example.com",
+            })
+            self.assertIn("ssl_certificate /etc/letsencrypt/live/*.example.com/fullchain.pem;", conf)
+            self.assertNotIn("live/sub.example.com/fullchain.pem", conf)
+        finally:
+            panel._proxy_cert = real_pc
 
     def test_proxy_store_crud(self):
         """ProxyStore 增删查"""
