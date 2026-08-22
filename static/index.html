@@ -445,7 +445,7 @@ tr:hover td { background: var(--panel-solid); }
           <option value="http">HTTP-01 验证</option>
           <option value="dns">DNS 验证</option>
         </select>
-        <select id="cert_provider" style="display:none">
+        <select id="cert_provider" style="display:none" onchange="renderCertProviderFields()">
           <option value="cf">Cloudflare</option>
           <option value="dp">DNSPod（腾讯云）</option>
           <option value="ali">阿里云</option>
