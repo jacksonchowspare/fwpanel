@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.25.3"
+CURRENT_VERSION = "1.25.4"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1651,14 +1651,15 @@ def issue_cert_dns(domain, email, provider, creds):
                "--server", "letsencrypt", "--force"]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
         if r.returncode != 0:
-            return False, f"证书申请失败: {(r.stderr or r.stdout).strip()[:300]}"
+            # 完整报错（v1.25.4：不再截断，acme.sh 的失败原因对排查至关重要）
+            return False, f"证书申请失败: {(r.stderr or r.stdout).strip()}"
         install = [ACME_SH, "--install-cert", "-d", domain,
                    "--fullchain-file", f"{LE_LIVE}/{domain}/fullchain.pem",
                    "--key-file", f"{LE_LIVE}/{domain}/privkey.pem",
                    "--reloadcmd", "nginx -s reload || true"]
         r2 = subprocess.run(install, capture_output=True, text=True, timeout=60, env=env)
         if r2.returncode != 0:
-            return False, f"证书已签发但安装失败: {(r2.stderr or r2.stdout).strip()[:300]}"
+            return False, f"证书已签发但安装失败: {(r2.stderr or r2.stdout).strip()}"
     except FileNotFoundError:
         return False, "acme.sh 不可用"
     except subprocess.TimeoutExpired:
@@ -2836,6 +2837,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._api_firewall()
         elif path == "/api/cert":
             self._api_cert_add()
+        elif path == "/api/cert/creds":
+            self._api_cert_creds_clear()
         elif path.startswith("/api/cert/"):
             self._api_cert_action(path.rsplit("/", 1)[1])
         elif path == "/api/proxy":
@@ -3703,7 +3706,25 @@ class PanelHandler(BaseHTTPRequestHandler):
             "certbot": certbot_available(),
             "renew": cert_renew_status(),
             "certs": items,
+            "dns_creds": {p: bool((self.server.config.get("dns_creds") or {}).get(p))
+                          for p in DNS_PROVIDERS},
         })
+
+    def _api_cert_creds_clear(self):
+        """清除已保存的 DNS 凭证：POST /api/cert/creds {provider}"""
+        token = self._require_auth()
+        if token is None:
+            return
+        data = self._read_json()
+        provider = str(data.get("provider", "")).strip()
+        if provider not in DNS_PROVIDERS:
+            self._send(400, {"error": f"不支持的提供商: {provider}"})
+            return
+        dns_creds = dict(self.server.config.get("dns_creds") or {})
+        if provider in dns_creds:
+            del dns_creds[provider]
+        self.server.config.set("dns_creds", dns_creds)
+        self._send(200, {"ok": True, "msg": f"{DNS_PROVIDERS[provider]['name']} 凭证已清除"})
 
     def _api_cert_add(self):
         """单独申请 SSL 证书：{domain, email?, method?: http|dns, provider?, credentials?}
@@ -3721,8 +3742,18 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         if method == "dns":
             provider = str(data.get("provider", "")).strip()
-            creds = data.get("credentials") or {}
-            ok, msg = issue_cert_dns(domain, email, provider, creds)
+            creds = {k: str(v).strip() for k, v in (data.get("credentials") or {}).items() if str(v).strip()}
+            # 凭证保存（v1.25.4 用户要求）：新输入保存到 config.json dns_creds，留空=用已保存
+            cfg = self.server.config
+            saved = (cfg.get("dns_creds") or {}).get(provider) or {}
+            if creds:
+                dns_creds = dict(cfg.get("dns_creds") or {})
+                dns_creds[provider] = {**saved, **creds}
+                cfg.set("dns_creds", dns_creds)
+                merged = dns_creds[provider]
+            else:
+                merged = saved
+            ok, msg = issue_cert_dns(domain, email, provider, merged)
             if not ok:
                 self._send(500, {"error": msg})
                 return

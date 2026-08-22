@@ -935,6 +935,7 @@ function fmtRenew(r) {
 async function loadCerts() {
   try {
     const d = await api("GET", "/api/cert");
+    dnsCredsStatus = d.dns_creds || {};
     const st = $("cert_status");
     st.style.color = "";
     st.textContent = (d.installed ? "✅ nginx 已安装" : "⚠ nginx 未安装（需先一键安装）")
@@ -963,6 +964,8 @@ const CERT_PROVIDER_FIELDS = {
   dp:  [["DP_Id", "DNSPod ID", "text"], ["DP_Key", "DNSPod Token", "password"]],
   ali: [["Ali_Key", "阿里云 AccessKey ID", "text"], ["Ali_Secret", "阿里云 AccessKey Secret", "password"]],
 };
+const PROVIDER_NAMES = { cf: "Cloudflare", dp: "DNSPod", ali: "阿里云" };
+let dnsCredsStatus = {};
 function certMethodChange() {
   const dns = $("cert_method").value === "dns";
   $("cert_provider").style.display = dns ? "inline-block" : "none";
@@ -972,9 +975,23 @@ function certMethodChange() {
 function renderCertProviderFields() {
   const prov = $("cert_provider").value;
   const fields = CERT_PROVIDER_FIELDS[prov] || [];
+  const saved = !!dnsCredsStatus[prov];
   $("cert_dns_fields").innerHTML = fields.map(([k, label, type]) =>
-    `<div style="margin:6px 0"><label style="color:var(--muted);font-size:12px">${label}：</label><input type="${type}" id="cert_cred_${k}" placeholder="${k}" style="width:300px;max-width:100%;margin-left:8px"></div>`
-  ).join("") + '<div style="color:var(--muted);font-size:11px;margin-top:4px">凭证仅本次使用，acme.sh 自动保存用于续期，面板不存储</div>';
+    `<div style="margin:6px 0"><label style="color:var(--muted);font-size:12px">${label}：</label><input type="${type}" id="cert_cred_${k}" placeholder="${k}${saved ? "（已保存，留空使用）" : ""}" style="width:300px;max-width:100%;margin-left:8px"></div>`
+  ).join("") + (saved
+    ? `<div style="color:var(--accent2);font-size:11px;margin-top:4px">✅ ${PROVIDER_NAMES[prov]} 凭证已保存，留空即可使用 <button class="btn mini danger" onclick="clearCertCreds()">清除</button></div>`
+    : '<div style="color:var(--muted);font-size:11px;margin-top:4px">凭证保存后下次申请无需重复输入，可在面板清除</div>');
+}
+async function clearCertCreds() {
+  const prov = $("cert_provider").value;
+  confirmPanel(`确认清除已保存的 ${PROVIDER_NAMES[prov]} 凭证？\n\n清除后下次申请需重新输入。`, async () => {
+    try {
+      const d = await api("POST", "/api/cert/creds", { provider: prov });
+      toast(d.msg || "已清除", "okk");
+      dnsCredsStatus[prov] = false;
+      renderCertProviderFields();
+    } catch (e) { toast(e.message, "err"); }
+  }, "🗑 清除凭证");
 }
 async function addCert() {
   const domain = $("cert_domain").value.trim();

@@ -1174,6 +1174,21 @@ class TestAPI(unittest.TestCase):
             code, d = self._req("GET", "/api/cert", token=token)
             old = [c for c in d["certs"] if c["domain"] == "old.example.com"][0]
             self.assertEqual(old["method"], "http")
+            # 凭证保存状态（v1.25.4）
+            code, d = self._req("GET", "/api/cert", token=token)
+            self.assertTrue(d["dns_creds"].get("cf"), "申请后凭证应标记已保存")
+            self.assertFalse(d["dns_creds"].get("ali"))
+            # 留空凭证再次申请 → 使用已保存凭证
+            code, d = self._req("POST", "/api/cert",
+                                {"domain": "dns2.example.com", "method": "dns",
+                                 "provider": "cf", "credentials": {}}, token=token)
+            self.assertEqual(code, 200, d)
+            self.assertEqual(calls["issue"][3], {"CF_Token": "tok123"}, "应复用已保存凭证")
+            # 清除凭证
+            code, d = self._req("POST", "/api/cert/creds", {"provider": "cf"}, token=token)
+            self.assertEqual(code, 200, d)
+            code, d = self._req("GET", "/api/cert", token=token)
+            self.assertFalse(d["dns_creds"].get("cf"), "清除后凭证状态应为 False")
             # 非法 method
             code, d = self._req("POST", "/api/cert",
                                 {"domain": "x.example.com", "method": "ftp"}, token=token)
