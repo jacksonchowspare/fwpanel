@@ -47,7 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 # ------------------------------- 常量与路径 -------------------------------
-CURRENT_VERSION = "1.25.2"
+CURRENT_VERSION = "1.25.3"
 # 测试时用环境变量覆盖配置目录（单测/冒烟测试）
 BASE_DIR = os.environ.get("FW_TEST_DIR", "/etc/fwpanel")
 APP_DIR = os.environ.get("FW_APP_DIR", "/usr/local/lib/fwpanel")
@@ -1600,15 +1600,26 @@ def acme_available():
 
 
 def install_acme_sh():
-    """安装 acme.sh（~/.acme.sh，root 用户；自带自动续期 cron）"""
+    """安装 acme.sh（~/.acme.sh，root 用户；自带自动续期 cron）。
+
+    ⚠ systemd 服务环境可能缺 HOME/PATH（v1.25.3 加固：显式补全，失败原因写面板日志，
+    不再静默返回 False——此前用户报"acme.sh 安装失败"但手动执行却成功，无法定位）。"""
+    env = dict(os.environ)
+    env.setdefault("HOME", os.path.expanduser("~"))
+    env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
     try:
         r = subprocess.run(["curl", "-fsSL", "https://get.acme.sh"],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, timeout=60, env=env)
         if r.returncode != 0:
+            log(f"acme.sh 安装失败: curl 下载 rc={r.returncode} err={(r.stderr or '')[:200]}")
             return False
-        r2 = subprocess.run(["sh"], input=r.stdout, capture_output=True, text=True, timeout=120)
-        return r2.returncode == 0 and acme_available()
-    except Exception:
+        r2 = subprocess.run(["sh"], input=r.stdout, capture_output=True, text=True, timeout=120, env=env)
+        ok = r2.returncode == 0 and acme_available()
+        if not ok:
+            log(f"acme.sh 安装失败: 安装脚本 rc={r2.returncode} 输出={(r2.stdout or r2.stderr or '')[-400:]}")
+        return ok
+    except Exception as e:
+        log(f"acme.sh 安装异常: {type(e).__name__}: {e}")
         return False
 
 
